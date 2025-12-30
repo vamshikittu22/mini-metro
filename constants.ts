@@ -1,11 +1,11 @@
 export const THEME = {
-  background: '#F8F4EE',
-  text: '#2F3436',
-  stationStroke: '#2F3436',
-  stationFill: '#FFFFFF',
+  background: '#222222',
+  text: '#FFFFFF',
+  stationStroke: '#FFFFFF',
+  stationFill: '#222222',
   lineColors: [
     '#EB2827', // Red
-    '#019AD1', // Blue
+    '#3E86C6', // Blue
     '#51A03E', // Green
     '#FBAE17', // Yellow
     '#A05DA5', // Purple
@@ -15,13 +15,13 @@ export const THEME = {
     '#F3A9BB', // Pink
     '#00782A'  // Dark Green
   ],
-  lineWidth: 14,
-  stationSize: 18,
+  lineWidth: 12,
+  stationSize: 16,
   passengerSize: 8,
-  trainWidth: 84,  
-  trainHeight: 46, 
-  wagonWidth: 70,  
-  wagonGap: 10,     
+  trainWidth: 70,  
+  trainHeight: 38, 
+  wagonWidth: 60,  
+  wagonGap: 8,     
   timerThreshold: 10000, 
   minZoom: 0.2,
   maxZoom: 2.0

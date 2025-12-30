@@ -14,12 +14,12 @@ export const BaseButton: React.FC<BaseButtonProps> = ({
   className = '',
   ...props 
 }) => {
-  const baseStyles = 'inline-flex items-center justify-center font-black uppercase tracking-widest transition-all rounded-full select-none';
+  const baseStyles = 'inline-flex items-center justify-center font-black uppercase tracking-widest transition-all rounded-sm select-none';
   
   const variants = {
-    primary: 'bg-[#2F3436] text-white hover:bg-black shadow-lg',
-    secondary: 'bg-white/60 text-[#2F3436]/60 border border-black/5 hover:text-[#2F3436] hover:bg-white/80',
-    ghost: 'text-[#2F3436]/40 hover:text-[#2F3436] transition-colors',
+    primary: 'bg-white text-black hover:bg-white/80 shadow-lg',
+    secondary: 'bg-white/10 text-white border border-white/5 hover:bg-white/20',
+    ghost: 'text-white/40 hover:text-white transition-colors',
     danger: 'bg-red-500/10 text-red-600 border border-red-500/20 hover:bg-red-500 hover:text-white',
   };
 
@@ -29,7 +29,7 @@ export const BaseButton: React.FC<BaseButtonProps> = ({
     lg: 'px-12 py-4 text-sm',
   };
 
-  const activeStyles = active ? 'bg-[#2F3436] text-white' : '';
+  const activeStyles = active ? 'bg-white text-black' : '';
 
   return (
     <button 

@@ -59,7 +59,11 @@ export class GameEngine {
     const baseRate = GAME_CONFIG.spawnRate;
     const levelFactor = 1 + (this.state.level - 1) * 0.2;
     const timeFactor = 1 + (this.state.daysElapsed / 28);
-    return Math.max(800, baseRate / (levelFactor * timeFactor));
+    let modeFactor = 1.0;
+    if (this.state.mode === 'EXTREME') modeFactor = 1.5;
+    if (this.state.mode === 'CREATIVE') modeFactor = 0.5;
+    
+    return Math.max(800, (baseRate / (levelFactor * timeFactor)) / modeFactor);
   }
 
   findNextLeg(currentStationId: number, targetType: StationType): { lineId: number, transferStationId: number } | null {
@@ -219,16 +223,25 @@ export class GameEngine {
   }
 
   updateStations(dt: number) {
+    if (this.state.mode === 'CREATIVE') {
+      this.state.stations.forEach(s => s.timer = 0);
+      return;
+    }
+
+    const timerSpeed = this.state.mode === 'EXTREME' ? 1.5 : 1.0;
+
     this.state.stations.forEach(station => {
       if (station.waitingPassengers.length >= GAME_CONFIG.maxPassengers) {
-        station.timer = Math.min(1.0, station.timer + dt / (THEME.timerThreshold * 4));
+        station.timer = Math.min(1.0, station.timer + (dt / (THEME.timerThreshold * 4)) * timerSpeed);
       } else {
-        station.timer = Math.max(0, station.timer - dt / (THEME.timerThreshold * 2));
+        station.timer = Math.max(0, station.timer - (dt / (THEME.timerThreshold * 2)));
       }
     });
   }
 
   checkFailure() {
+    if (this.state.mode === 'ENDLESS' || this.state.mode === 'CREATIVE') return;
+
     const failingStation = this.state.stations.find(s => s.timer >= 1.0);
     if (failingStation && this.state.gameActive) {
       this.state.gameActive = false;
@@ -236,7 +249,7 @@ export class GameEngine {
   }
 
   spawnPassenger() {
-    if (!this.state.gameActive || this.state.stations.length < 2) return;
+    if (!this.state.gameActive || !this.state.autoSpawn || this.state.stations.length < 2) return;
     const startStation = this.state.stations[Math.floor(Math.random() * this.state.stations.length)];
     const availableTypes = Array.from(new Set(this.state.stations.map(s => s.type))).filter(t => t !== startStation.type);
     if (availableTypes.length === 0) return;
@@ -258,7 +271,7 @@ export class GameEngine {
   }
 
   spawnStation(width: number, height: number, projectFn: any) {
-    if (!this.state.gameActive) return;
+    if (!this.state.gameActive || !this.state.autoSpawn) return;
     const city = CITIES.find(c => c.id === this.state.cityId) || CITIES[0];
     const allTypes: StationType[] = ['circle', 'triangle', 'square', 'pentagon', 'star'];
     const typePoolCount = Math.min(allTypes.length, 2 + Math.floor(this.state.level / 2));

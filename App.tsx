@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { GameState, Station, TransitLine, CITIES, City, Point, StationType } from './types';
+import { GameState, Station, TransitLine, CITIES, City, Point, StationType, GameMode } from './types';
 import { THEME, GAME_CONFIG } from './constants';
 import { project, snapToAngle, getDistance, isSegmentCrossingWater, WORLD_SIZE, distToSegment, getBentPath } from './services/geometry';
 import { GameEngine } from './services/gameEngine';
@@ -9,20 +9,47 @@ import { Stats } from './components/HUD/Stats';
 import { ResourcePanel } from './components/HUD/ResourcePanel';
 import { BaseButton } from './components/UI/BaseButton';
 
+type AppView = 'MAIN_MENU' | 'CITY_SELECT' | 'MODE_SELECT' | 'GAME';
+
 const DAYS = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'];
+
+// Refined Day/Night Cycle Colors
+const DAY_CYCLE_COLORS = {
+  DAY: '#222222',    // Deep Swiss Grey (Standard)
+  NIGHT: '#0F0F0F',  // Obsidian Black
+  SUNRISE: '#22282D', // Dawn Blue
+  SUNSET: '#2D2422',  // Dusk Rust
+};
+
+const lerpColor = (a: string, b: string, t: number) => {
+  const ah = parseInt(a.replace('#', ''), 16),
+        ar = ah >> 16, ag = (ah >> 8) & 0xff, ab = ah & 0xff,
+        bh = parseInt(b.replace('#', ''), 16),
+        br = bh >> 16, bg = (bh >> 8) & 0xff, bb = bh & 0xff,
+        rr = ar + t * (br - ar),
+        rg = ag + t * (bg - ag),
+        rb = ab + t * (bb - ab);
+  return '#' + ((1 << 24) + (Math.round(rr) << 16) + (Math.round(rg) << 8) + Math.round(rb)).toString(16).slice(1);
+};
 
 const App: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [view, setView] = useState<AppView>('MAIN_MENU');
   const [currentCity, setCurrentCity] = useState<City | null>(null);
+  const [selectedMode, setSelectedMode] = useState<GameMode>('NORMAL');
   const [camera, setCamera] = useState({ x: 0, y: 0, scale: 0.8 });
   
   const [gameState, setGameState] = useState<GameState>({
     cityId: '',
+    mode: 'NORMAL',
     stations: [],
     lines: [],
     score: 0,
     level: 1,
     gameActive: true,
+    autoSpawn: true,
+    dayNightAuto: true,
+    isNightManual: false,
     timeScale: 1,
     daysElapsed: 0,
     nextRewardIn: 60000 * 7,
@@ -43,26 +70,44 @@ const App: React.FC = () => {
     y: (sy - camera.y) / camera.scale
   });
 
+  // Calculate background color based on cycle state
+  const getDynamicBackground = useCallback((days: number, auto: boolean, night: boolean) => {
+    if (!auto) {
+      return night ? DAY_CYCLE_COLORS.NIGHT : DAY_CYCLE_COLORS.DAY;
+    }
+    // A "day" in game lasts 120 seconds for smoother transitions
+    const t = (days * 0.5) % 1.0; 
+    if (t < 0.25) return lerpColor(DAY_CYCLE_COLORS.SUNRISE, DAY_CYCLE_COLORS.DAY, t * 4);
+    if (t < 0.5) return lerpColor(DAY_CYCLE_COLORS.DAY, DAY_CYCLE_COLORS.SUNSET, (t - 0.25) * 4);
+    if (t < 0.75) return lerpColor(DAY_CYCLE_COLORS.SUNSET, DAY_CYCLE_COLORS.NIGHT, (t - 0.5) * 4);
+    return lerpColor(DAY_CYCLE_COLORS.NIGHT, DAY_CYCLE_COLORS.SUNRISE, (t - 0.75) * 4);
+  }, []);
+
   const initGame = (city: City) => {
-    const initialStations: Station[] = city.initialStations.map(s => {
-      const pos = project(s.lat, s.lon, city);
+    setCurrentCity(city);
+    setView('MODE_SELECT');
+  };
+
+  const startGame = () => {
+    if (!currentCity) return;
+    const initialStations: Station[] = currentCity.initialStations.map(s => {
+      const pos = project(s.lat, s.lon, currentCity);
       return { ...pos, id: s.id, type: s.type, name: s.name, waitingPassengers: [], timer: 0 };
     });
     const engine = new GameEngine({
-      cityId: city.id, stations: initialStations, lines: [], score: 0, level: 1, gameActive: true, timeScale: 1, daysElapsed: 0, nextRewardIn: 60000 * 7,
+      cityId: currentCity.id, mode: selectedMode, stations: initialStations, lines: [], score: 0, level: 1, gameActive: true, autoSpawn: true, dayNightAuto: true, isNightManual: false, timeScale: 1, daysElapsed: 0, nextRewardIn: 60000 * 7,
       resources: { lines: 5, trains: 3, tunnels: 3, wagons: 5 }
     });
     engineRef.current = engine;
     setGameState({ ...engine.state });
     
-    // Auto-frame camera
     const minX = Math.min(...initialStations.map(s => s.x));
     const maxX = Math.max(...initialStations.map(s => s.x));
     const minY = Math.min(...initialStations.map(s => s.y));
     const maxY = Math.max(...initialStations.map(s => s.y));
     const initialScale = Math.min(1.0, (window.innerWidth * 0.4) / (maxX - minX || 1));
     setCamera({ x: window.innerWidth / 2 - ((minX + maxX) / 2) * initialScale, y: window.innerHeight / 2 - ((minY + maxY) / 2) * initialScale, scale: initialScale });
-    setCurrentCity(city);
+    setView('GAME');
   };
 
   useEffect(() => {
@@ -72,26 +117,28 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    if (!currentCity) return;
+    if (!currentCity || view !== 'GAME') return;
     let pTimeout: any;
     const loop = () => {
-      if (engineRef.current && engineRef.current.state.gameActive) { 
+      if (engineRef.current && engineRef.current.state.gameActive && engineRef.current.state.autoSpawn) { 
         engineRef.current.spawnPassenger(); 
         const nextSpawn = engineRef.current.getDynamicSpawnRate() / currentCity.difficulty;
         pTimeout = setTimeout(loop, nextSpawn); 
+      } else {
+        pTimeout = setTimeout(loop, 2000); 
       }
     };
     pTimeout = setTimeout(loop, GAME_CONFIG.spawnRate);
     const sInt = setInterval(() => {
-      if (engineRef.current && engineRef.current.state.gameActive) {
+      if (engineRef.current && engineRef.current.state.gameActive && engineRef.current.state.autoSpawn) {
         engineRef.current.spawnStation(window.innerWidth, window.innerHeight, project);
       }
     }, GAME_CONFIG.stationSpawnRate);
     return () => { clearTimeout(pTimeout); clearInterval(sInt); };
-  }, [currentCity]);
+  }, [currentCity, view]);
 
   useEffect(() => {
-    if (!currentCity) return;
+    if (!currentCity || view !== 'GAME') return;
     let fId: number;
     const loop = (t: number) => {
       if (engineRef.current) { 
@@ -103,9 +150,10 @@ const App: React.FC = () => {
     };
     fId = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(fId);
-  }, [dimensions, camera, isDragging, isPanning, dragStart, dragCurrent, activeLineIdx, currentCity]);
+  }, [dimensions, camera, isDragging, isPanning, dragStart, dragCurrent, activeLineIdx, currentCity, view, gameState.dayNightAuto, gameState.isNightManual]);
 
   const drawShape = (ctx: CanvasRenderingContext2D, x: number, y: number, size: number, type: StationType, fill: boolean = true) => {
+    const currentBg = getDynamicBackground(gameState.daysElapsed, gameState.dayNightAuto, gameState.isNightManual);
     ctx.beginPath();
     if (type === 'circle') ctx.arc(x, y, size, 0, Math.PI * 2);
     else if (type === 'square') ctx.rect(x - size, y - size, size * 2, size * 2);
@@ -128,7 +176,12 @@ const App: React.FC = () => {
       }
       ctx.closePath();
     }
-    if (fill) ctx.fill();
+    if (fill) {
+      ctx.fillStyle = currentBg;
+      ctx.fill();
+    }
+    ctx.strokeStyle = THEME.text;
+    ctx.lineWidth = 3;
     ctx.stroke();
   };
 
@@ -140,15 +193,30 @@ const App: React.FC = () => {
     const { stations, lines } = engineRef.current.state;
     const uiScale = Math.pow(1 / camera.scale, 0.85); 
 
-    ctx.fillStyle = THEME.background;
+    const currentBg = getDynamicBackground(gameState.daysElapsed, gameState.dayNightAuto, gameState.isNightManual);
+    ctx.fillStyle = currentBg;
     ctx.fillRect(0, 0, dimensions.width, dimensions.height);
 
     ctx.save();
     ctx.translate(camera.x, camera.y);
     ctx.scale(camera.scale, camera.scale);
 
-    // Water
-    ctx.fillStyle = '#E3E9F0';
+    ctx.strokeStyle = lerpColor(currentBg, THEME.text, 0.05);
+    ctx.lineWidth = 1;
+    const gridStep = 200;
+    const startX = Math.floor((-camera.x / camera.scale) / gridStep) * gridStep;
+    const endX = Math.ceil((dimensions.width - camera.x / camera.scale) / gridStep) * gridStep;
+    const startY = Math.floor((-camera.y / camera.scale) / gridStep) * gridStep;
+    const endY = Math.ceil((dimensions.height - camera.y / camera.scale) / gridStep) * gridStep;
+
+    for (let x = startX; x <= endX; x += gridStep) {
+      ctx.beginPath(); ctx.moveTo(x, startY); ctx.lineTo(x, endY); ctx.stroke();
+    }
+    for (let y = startY; y <= endY; y += gridStep) {
+      ctx.beginPath(); ctx.moveTo(startX, y); ctx.lineTo(endX, y); ctx.stroke();
+    }
+
+    ctx.fillStyle = lerpColor(currentBg, '#1a2b38', 0.5);
     currentCity.water.forEach(poly => {
       ctx.beginPath();
       poly.forEach((p, i) => { 
@@ -158,7 +226,6 @@ const App: React.FC = () => {
       ctx.closePath(); ctx.fill();
     });
 
-    // Lines
     lines.forEach(line => {
       if (line.stations.length < 2) return;
       line.stations.forEach((sid, idx) => {
@@ -175,14 +242,13 @@ const App: React.FC = () => {
           ctx.stroke();
 
           if (isSegmentCrossingWater(s1, s2, currentCity)) {
-            ctx.save(); ctx.lineCap = 'butt'; ctx.strokeStyle = '#FFFFFF'; ctx.lineWidth = THEME.lineWidth / 3; ctx.setLineDash([8, 12]);
+            ctx.save(); ctx.lineCap = 'butt'; ctx.strokeStyle = currentBg; ctx.lineWidth = THEME.lineWidth / 2; ctx.setLineDash([12, 12]);
             ctx.beginPath(); ctx.moveTo(s1.x, s1.y); path.slice(1).forEach(p => ctx.lineTo(p.x, p.y)); ctx.stroke();
             ctx.restore();
           }
         }
       });
 
-      // Trains & Wagons
       line.trains.forEach(train => {
         const sIdx = Math.max(0, Math.min(train.nextStationIndex, line.stations.length - 1));
         const fIdx = Math.max(0, Math.min(train.direction === 1 ? sIdx - 1 : sIdx + 1, line.stations.length - 1));
@@ -202,15 +268,14 @@ const App: React.FC = () => {
           ctx.fillStyle = THEME.text; 
           ctx.fillRect(-THEME.trainWidth/2, -THEME.trainHeight/2, THEME.trainWidth, THEME.trainHeight);
           
-          // Draw engine passengers - grid based for maximum visibility
           const enginePassengers = train.passengers.slice(0, GAME_CONFIG.trainCapacity);
           enginePassengers.forEach((p, i) => {
             const col = i % 3;
             const row = Math.floor(i / 3);
-            const pX = -THEME.trainWidth/2 + 15 + col * 27;
-            const pY = -THEME.trainHeight/2 + 12 + row * 22;
-            ctx.fillStyle = '#FFFFFF'; ctx.strokeStyle = 'transparent';
-            drawShape(ctx, pX, pY, 7.5, p.targetType, true);
+            const pX = -THEME.trainWidth/2 + 12 + col * 24;
+            const pY = -THEME.trainHeight/2 + 10 + row * 18;
+            ctx.fillStyle = currentBg; ctx.strokeStyle = 'transparent';
+            drawShape(ctx, pX, pY, 6, p.targetType, true);
           });
           
           for (let w = 0; w < train.wagons; w++) {
@@ -223,10 +288,10 @@ const App: React.FC = () => {
             wagonPassengers.forEach((p, i) => {
               const col = i % 3;
               const row = Math.floor(i / 3);
-              const pX = offset + 13 + col * 22;
-              const pY = -THEME.trainHeight/2 + 12 + row * 22;
-              ctx.fillStyle = '#FFFFFF'; ctx.strokeStyle = 'transparent';
-              drawShape(ctx, pX, pY, 6.5, p.targetType, true);
+              const pX = offset + 12 + col * 18;
+              const pY = -THEME.trainHeight/2 + 10 + row * 18;
+              ctx.fillStyle = currentBg; ctx.strokeStyle = 'transparent';
+              drawShape(ctx, pX, pY, 5, p.targetType, true);
             });
           }
           ctx.restore();
@@ -234,7 +299,6 @@ const App: React.FC = () => {
       });
     });
 
-    // Ghost line
     if (isDragging && dragStart && dragCurrent) {
        ctx.strokeStyle = THEME.lineColors[activeLineIdx];
        ctx.lineWidth = THEME.lineWidth;
@@ -247,16 +311,13 @@ const App: React.FC = () => {
        ctx.stroke(); ctx.setLineDash([]);
     }
 
-    // Stations
     stations.forEach(s => {
       const size = THEME.stationSize * uiScale;
-      ctx.strokeStyle = THEME.stationStroke; ctx.fillStyle = THEME.stationFill; ctx.lineWidth = 4 * uiScale;
       drawShape(ctx, s.x, s.y, size, s.type, true);
 
       ctx.fillStyle = THEME.text; ctx.font = `900 ${18 * uiScale}px Inter`; ctx.textAlign = 'center'; 
       ctx.fillText(s.name.toUpperCase(), s.x, s.y + size + (28 * uiScale));
 
-      // Station passengers
       s.waitingPassengers.forEach((p, i) => {
         const pS = THEME.passengerSize * uiScale;
         const spacing = pS * 2.8;
@@ -272,61 +333,168 @@ const App: React.FC = () => {
       if (s.timer > 0) { ctx.strokeStyle='#FF4444'; ctx.lineWidth=7*uiScale; ctx.beginPath(); ctx.arc(s.x,s.y,size+14*uiScale, -Math.PI/2, -Math.PI/2+Math.PI*2*s.timer); ctx.stroke(); }
     });
     ctx.restore();
-  }, [dimensions, gameState, camera, currentCity, isDragging, dragStart, dragCurrent, activeLineIdx]);
+  }, [dimensions, gameState, camera, currentCity, isDragging, dragStart, dragCurrent, activeLineIdx, view, getDynamicBackground]);
 
-  if (!currentCity) {
+  const MenuButton = ({ label, icon, onClick }: { label: string, icon?: string, onClick?: () => void }) => (
+    <div className="flex items-center gap-4 group cursor-pointer" onClick={onClick}>
+      <span className="text-white text-4xl group-hover:translate-x-2 transition-transform">{icon || '→'}</span>
+      <div className="bg-[#3E86C6] px-6 py-2">
+        <span className="text-white text-5xl font-black uppercase tracking-tight">{label}</span>
+      </div>
+    </div>
+  );
+
+  if (view === 'MAIN_MENU') {
     return (
-      <div id="city-menu" className="fixed inset-0 bg-[#F8F4EE] z-[300] flex flex-col items-center justify-center p-12 overflow-y-auto no-scrollbar">
-        <div className="max-w-4xl w-full text-center">
-          <h1 className="text-8xl font-black tracking-tighter text-[#2F3436] mb-4 uppercase">System Select</h1>
-          <p className="text-[#2F3436]/40 font-bold tracking-[0.6em] mb-20 uppercase">Global Transit Architect</p>
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {CITIES.map(city => (
-              <div 
-                key={city.id} 
-                onClick={() => initGame(city)}
-                className="group relative bg-white border border-black/5 p-8 rounded-[2rem] text-left cursor-pointer transition-all hover:scale-105 hover:shadow-2xl hover:border-black/20"
-              >
-                <div className="flex justify-between items-start mb-6">
-                  <h3 className="text-2xl font-black text-[#2F3436] uppercase tracking-tight">{city.name}</h3>
-                  <div className="w-10 h-1 rounded-full transition-all group-hover:w-full" style={{ backgroundColor: city.color }} />
-                </div>
-                <div className="flex gap-4">
-                  <div className="flex flex-col">
-                    <span className="text-[10px] font-black text-black/20 uppercase">Difficulty</span>
-                    <div className="flex gap-0.5 mt-1">
-                      {[...Array(Math.ceil(city.difficulty * 2))].map((_, i) => (
-                        <div key={i} className="w-2 h-2 bg-[#2F3436] rounded-full" />
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
+      <div className="fixed inset-0 bg-[#222222] z-[300] flex flex-col items-start justify-center p-24 overflow-hidden select-none">
+        <h1 className="text-9xl font-black tracking-tighter text-white mb-20 uppercase flex items-center gap-4">
+          Mini Metro <span className="text-4xl">▲</span>
+        </h1>
+        <div className="flex flex-col gap-8">
+          <MenuButton label="Play" onClick={() => setView('CITY_SELECT')} />
+          <MenuButton label="Resume" icon="↗" />
+          <MenuButton label="Daily Challenge" icon="→" />
+          <MenuButton label="Options" icon="↓" />
+          <MenuButton label="Exit" icon="↙" />
         </div>
       </div>
     );
   }
 
+  if (view === 'CITY_SELECT') {
+    return (
+      <div className="fixed inset-0 bg-[#222222] z-[300] flex flex-col items-center p-24 overflow-y-auto no-scrollbar select-none">
+        <div className="w-full flex justify-between items-center mb-16">
+          <h2 className="text-7xl font-black text-white/10 uppercase tracking-tighter">Cities</h2>
+          <button onClick={() => setView('MAIN_MENU')} className="text-white text-xl font-black uppercase tracking-widest opacity-40 hover:opacity-100 transition-opacity">Back</button>
+        </div>
+        
+        <div className="flex gap-12 overflow-x-auto w-full pb-12 snap-x no-scrollbar">
+          {CITIES.map(city => (
+            <div 
+              key={city.id} 
+              onClick={() => initGame(city)}
+              className="flex-shrink-0 w-[450px] snap-center cursor-pointer group"
+            >
+              <h3 className="text-6xl font-black text-white mb-8 group-hover:translate-x-2 transition-transform">{city.name}</h3>
+              <div className="aspect-[4/5] bg-[#1a1a1a] border border-white/5 relative p-12 flex flex-col justify-between">
+                <div className="absolute inset-0 opacity-20 pointer-events-none">
+                  <div className="absolute top-1/2 left-0 right-0 h-1 bg-[#51A03E]" />
+                  <div className="absolute top-0 bottom-0 left-1/3 w-1 bg-[#EB2827]" />
+                  <div className="absolute top-1/4 bottom-1/4 left-1/2 w-1 bg-[#FBAE17] -rotate-45" />
+                </div>
+                
+                <div className="relative z-10">
+                  <div className="flex gap-2 mb-4">
+                    {THEME.lineColors.slice(0, 6).map((c, i) => (
+                      <div key={i} className="w-4 h-4 rounded-full" style={{ backgroundColor: c }} />
+                    ))}
+                  </div>
+                  <p className="text-white/40 text-lg font-bold uppercase tracking-wider leading-relaxed">
+                    Redesign the original underground railway, the {city.name} transit network.
+                  </p>
+                </div>
+                
+                <div className="absolute top-0 right-0 p-4">
+                  <div className="w-8 h-8 bg-white/10 group-hover:bg-white transition-colors flex items-center justify-center">
+                    <span className="text-black text-xl">↗</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="fixed bottom-12 right-24 flex gap-12">
+           <div className="flex items-center gap-4 cursor-pointer group" onClick={() => { if(currentCity) setView('MODE_SELECT') }}>
+              <span className="text-white text-3xl">→</span>
+              <div className="bg-[#51A03E] px-4 py-2">
+                <span className="text-white text-5xl font-black uppercase tracking-tight">Play</span>
+              </div>
+            </div>
+            <div className="flex items-center gap-4 cursor-pointer group opacity-40">
+              <span className="text-white text-3xl">↓</span>
+              <div className="bg-[#51A03E] px-4 py-2">
+                <span className="text-white text-5xl font-black uppercase tracking-tight">Mode</span>
+              </div>
+            </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (view === 'MODE_SELECT') {
+    const modes: { id: GameMode, label: string, desc: string }[] = [
+      { id: 'NORMAL', label: 'Normal', desc: 'Standard metro operations. Stations overcrowd normally.' },
+      { id: 'EXTREME', label: 'Extreme', desc: 'Accelerated passenger growth. Overcrowding happens fast.' },
+      { id: 'ENDLESS', label: 'Endless', desc: 'No system failure. Build your dream network forever.' },
+      { id: 'CREATIVE', label: 'Creative', desc: 'Stations do not overcrowd. Place and edit stations freely.' },
+    ];
+
+    return (
+      <div className="fixed inset-0 bg-[#222222] z-[300] flex flex-col items-center justify-center p-24 select-none">
+        <div className="flex flex-col gap-6 text-center">
+          {modes.map(mode => (
+            <div 
+              key={mode.id}
+              onClick={() => setSelectedMode(mode.id)}
+              className={`px-12 py-4 cursor-pointer transition-all ${selectedMode === mode.id ? 'bg-[#51A03E] scale-110' : 'opacity-40 hover:opacity-100'}`}
+            >
+              <span className={`text-white font-black uppercase tracking-tighter ${selectedMode === mode.id ? 'text-8xl' : 'text-6xl'}`}>
+                {mode.label}
+              </span>
+            </div>
+          ))}
+        </div>
+        
+        <div className="mt-12 text-center max-w-lg min-h-[100px]">
+          <p className="text-white/60 text-xl font-bold uppercase tracking-widest leading-relaxed">
+            {modes.find(m => m.id === selectedMode)?.desc}
+          </p>
+          <div className="mt-12 flex flex-col items-center gap-2">
+            <div className="w-2 h-16 bg-[#51A03E]" />
+            <div className="w-8 h-8 rounded-full border-4 border-white" />
+            <div className="w-2 h-16 bg-[#51A03E]" />
+          </div>
+        </div>
+
+        <button 
+          onClick={startGame}
+          className="mt-12 text-white text-2xl font-black uppercase tracking-[0.5em] hover:text-[#51A03E] transition-colors"
+        >
+          Confirm Connection
+        </button>
+      </div>
+    );
+  }
+
   return (
-    <div className="relative w-screen h-screen bg-[#F8F4EE] select-none overflow-hidden font-sans">
+    <div className="relative w-screen h-screen bg-[#222222] select-none overflow-hidden font-sans">
       <div className="absolute top-0 left-0 w-full p-8 flex justify-between items-start z-10 pointer-events-none">
         <div className="flex flex-col gap-4 pointer-events-auto">
           <div>
             <div className="flex items-center gap-3">
-              <h1 className="text-4xl font-black tracking-tighter text-[#2F3436] uppercase">{currentCity.name}</h1>
-              <div className="bg-[#2F3436] text-white px-3 py-1 rounded-lg text-[10px] font-black uppercase shadow-lg">WEEK {gameState.level}</div>
+              <h1 className="text-4xl font-black tracking-tighter text-white uppercase">{currentCity?.name}</h1>
+              <div className="bg-white text-black px-3 py-1 rounded-sm text-[10px] font-black uppercase shadow-lg">WEEK {gameState.level}</div>
             </div>
-            <p className="text-[10px] font-bold text-[#2F3436]/40 uppercase tracking-[0.4em] mt-1">{DAYS[Math.floor(gameState.daysElapsed % 7)]}</p>
+            <p className="text-[10px] font-bold text-white/40 uppercase tracking-[0.4em] mt-1">{DAYS[Math.floor(gameState.daysElapsed % 7)]}</p>
           </div>
-          <button onClick={() => setCurrentCity(null)} className="text-[10px] font-black text-black/40 hover:text-black uppercase tracking-widest transition-colors flex items-center gap-2">
+          <button onClick={() => setView('CITY_SELECT')} className="text-[10px] font-black text-white/40 hover:text-white uppercase tracking-widest transition-colors flex items-center gap-2">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-            Change Region
+            System Select
           </button>
         </div>
-        <Stats score={gameState.score} timeScale={gameState.timeScale} onSpeedChange={(s) => { if(engineRef.current) engineRef.current.state.timeScale = s; setGameState({...gameState, timeScale: s}); }} />
+        <Stats 
+          score={gameState.score} 
+          timeScale={gameState.timeScale} 
+          autoSpawn={gameState.autoSpawn}
+          dayNightAuto={gameState.dayNightAuto}
+          isNightManual={gameState.isNightManual}
+          onSpeedChange={(s) => { if(engineRef.current) engineRef.current.state.timeScale = s; setGameState({...gameState, timeScale: s}); }} 
+          onToggleAutoSpawn={() => { if(engineRef.current) engineRef.current.state.autoSpawn = !engineRef.current.state.autoSpawn; setGameState({...gameState, autoSpawn: !gameState.autoSpawn}); }}
+          onToggleDayNightAuto={() => { if(engineRef.current) engineRef.current.state.dayNightAuto = !engineRef.current.state.dayNightAuto; setGameState({...gameState, dayNightAuto: !gameState.dayNightAuto}); }}
+          onToggleManualDayNight={() => { if(engineRef.current) engineRef.current.state.isNightManual = !engineRef.current.state.isNightManual; setGameState({...gameState, isNightManual: !gameState.isNightManual}); }}
+        />
       </div>
 
       <canvas 
@@ -352,7 +520,7 @@ const App: React.FC = () => {
             const worldMouse = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
             const hit = gameState.stations.find(s => getDistance(s, worldMouse) < 30 / camera.scale);
             if (hit && hit.id !== dragStart.id) {
-              const water = isSegmentCrossingWater(dragStart, hit, currentCity);
+              const water = isSegmentCrossingWater(dragStart, hit, currentCity!);
               if (!water || engineRef.current.state.resources.tunnels > 0) {
                 let line = engineRef.current.state.lines.find(l => l.id === activeLineIdx);
                 if (!line && engineRef.current.state.resources.lines > 0) {
@@ -406,10 +574,10 @@ const App: React.FC = () => {
       />
 
       {!gameState.gameActive && (
-        <div className="absolute inset-0 z-[200] flex items-center justify-center bg-white/90 backdrop-blur pointer-events-auto">
+        <div className="absolute inset-0 z-[200] flex items-center justify-center bg-black/90 backdrop-blur pointer-events-auto">
           <div className="text-center">
-            <h2 className="text-6xl font-black uppercase tracking-tighter text-[#2F3436] mb-4">Service Terminated</h2>
-            <p className="text-xl font-medium text-[#2F3436]/60 mb-12">System overload. Total score: {gameState.score}</p>
+            <h2 className="text-8xl font-black uppercase tracking-tighter text-white mb-4">Service Terminated</h2>
+            <p className="text-2xl font-medium text-white/40 mb-12">System overload. Total score: {gameState.score}</p>
             <BaseButton size="lg" onClick={() => window.location.reload()}>Reboot System</BaseButton>
           </div>
         </div>

@@ -1,4 +1,5 @@
 export type StationType = 'circle' | 'square' | 'triangle' | 'pentagon' | 'star';
+export type GameMode = 'NORMAL' | 'EXTREME' | 'ENDLESS' | 'CREATIVE';
 
 export interface Point {
   x: number;
@@ -57,11 +58,15 @@ export interface City {
 
 export interface GameState {
   cityId: string;
+  mode: GameMode;
   stations: Station[];
   lines: TransitLine[];
   score: number;
   level: number;
   gameActive: boolean;
+  autoSpawn: boolean; // Simulation toggle
+  dayNightAuto: boolean; // Auto cycle toggle
+  isNightManual: boolean; // Manual toggle
   timeScale: number;
   daysElapsed: number;
   nextRewardIn: number;
