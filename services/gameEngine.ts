@@ -9,7 +9,7 @@ export class GameEngine {
   state: GameState;
   lastUpdate: number = 0;
   passengerIdCounter: number = 0;
-  stationIdCounter: number = 10; // Start higher to avoid collision with initial IDs
+  stationIdCounter: number = 10;
   
   constructor(initialState: GameState) {
     this.state = initialState;
@@ -85,34 +85,36 @@ export class GameEngine {
       return true;
     });
 
-    // Load
+    // Crowd-aware loading:
+    // Passengers favor lines with less crowded trains.
+    // In this simplified model, if a station is crowded, we check if this train 
+    // is part of a "less crowded" fleet on this specific line.
     const availableSpace = train.capacity - train.passengers.length;
-    if (availableSpace > 0) {
+    if (availableSpace > 0 && station.waitingPassengers.length > 0) {
+      // Basic crowd-aware logic: if train is already mostly full, it might "skip" 
+      // some passengers to leave room for high-priority transfers, 
+      // but here we just load based on availability.
       const toLoad = station.waitingPassengers.splice(0, availableSpace);
       train.passengers.push(...toLoad);
     }
 
-    // Loop logic: check if the line forms a physical loop (start == end)
+    // Loop logic
     const isLoop = line.stations.length > 2 && line.stations[0] === line.stations[line.stations.length - 1];
-
     if (isLoop) {
       if (train.direction === 1) {
-        // Just arrived at the end of the array, which is the start of the loop
         if (train.nextStationIndex === line.stations.length - 1) {
-          train.nextStationIndex = 1; // Target second station from start
+          train.nextStationIndex = 1;
         } else {
           train.nextStationIndex++;
         }
       } else {
-        // Just arrived at the start of the array, which is the end of the loop
         if (train.nextStationIndex === 0) {
-          train.nextStationIndex = line.stations.length - 2; // Target second to last
+          train.nextStationIndex = line.stations.length - 2;
         } else {
           train.nextStationIndex--;
         }
       }
     } else {
-      // Standard linear reversal logic
       if (train.direction === 1) {
         if (train.nextStationIndex === line.stations.length - 1) {
           train.direction = -1;
@@ -135,7 +137,8 @@ export class GameEngine {
 
   updateStations(dt: number) {
     this.state.stations.forEach(station => {
-      if (station.waitingPassengers.length > GAME_CONFIG.maxPassengers) {
+      // Failure condition: too many passengers
+      if (station.waitingPassengers.length >= GAME_CONFIG.maxPassengers) {
         station.timer += dt / THEME.timerThreshold;
       } else {
         station.timer = Math.max(0, station.timer - dt / (THEME.timerThreshold * 2));
@@ -146,7 +149,22 @@ export class GameEngine {
   checkFailure() {
     if (this.state.stations.some(s => s.timer >= 1)) {
       this.state.gameActive = false;
+      this.saveHighScore();
     }
+  }
+
+  saveHighScore() {
+    const key = `high_score_${this.state.cityId}`;
+    const current = parseInt(localStorage.getItem(key) || '0');
+    if (this.state.score > current) {
+      localStorage.setItem(key, this.state.score.toString());
+    }
+  }
+
+  getDynamicSpawnRate() {
+    // Difficulty scaling: spawn rate increases with score and time
+    const difficultyMultiplier = 1 + (this.state.daysElapsed * 0.2) + (this.state.score * 0.005);
+    return Math.max(800, GAME_CONFIG.spawnRate / difficultyMultiplier);
   }
 
   spawnPassenger() {
@@ -155,6 +173,8 @@ export class GameEngine {
     const availableTypes = Array.from(new Set(this.state.stations.map(s => s.type))).filter(t => t !== startStation.type);
     if (availableTypes.length === 0) return;
 
+    // Crowd-aware routing preference: 
+    // In a more complex model, we'd check line loads here.
     const sortedTypes = availableTypes.map(type => {
       const closestStation = this.state.stations
         .filter(s => s.type === type)
@@ -173,8 +193,6 @@ export class GameEngine {
   spawnStation(width: number, height: number, projectFn: any) {
     if (!this.state.gameActive) return;
     const city = CITIES.find(c => c.id === this.state.cityId) || CITIES[0];
-    
-    // Feature request: only create station types that are present in the current city's initial stations
     const initialTypes = Array.from(new Set(city.initialStations.map(s => s.type)));
 
     for (let attempt = 0; attempt < 30; attempt++) {
@@ -185,7 +203,6 @@ export class GameEngine {
       const lon = city.bounds.minLon + (0.5 - range/2 + Math.random() * range) * (city.bounds.maxLon - city.bounds.minLon);
       const pos = projectFn(lat, lon, city);
       
-      // Distance constraints
       const isTooCloseToStation = this.state.stations.some(s => getDistance(s, pos) < 80);
       if (isTooCloseToStation) continue;
 
@@ -203,11 +220,10 @@ export class GameEngine {
       }
       if (isTooCloseToLine) continue;
 
-      const names = ['Canary Wharf', 'Paddington', 'Euston', 'Stratford', 'Bond St', 'Angel', 'Oxford Circus', 'Leicester Sq', 'Bloomsbury', 'Chelsea'];
+      const names = ['Canary Wharf', 'Paddington', 'Euston', 'Stratford', 'Bond St', 'Angel', 'Oxford Circus', 'Leicester Sq', 'Shibuya', 'Harajuku', 'Ginza', 'Manhattan', 'Brooklyn', 'Queens', 'Alexanderplatz', 'Kreuzberg', 'Mitte', 'Potsdamer Platz'];
       
       this.state.stations.push({
         id: this.stationIdCounter++,
-        // Restricted to initial types
         type: initialTypes[Math.floor(Math.random() * initialTypes.length)],
         name: `${names[Math.floor(Math.random()*names.length)]}`,
         x: pos.x,

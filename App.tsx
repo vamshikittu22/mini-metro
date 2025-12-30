@@ -10,6 +10,7 @@ const App: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [currentCity, setCurrentCity] = useState<City>(CITIES[0]);
   const [camera, setCamera] = useState({ x: 0, y: 0, scale: 0.8 });
+  const [highScore, setHighScore] = useState(0);
   
   const [gameState, setGameState] = useState<GameState>({
     cityId: CITIES[0].id,
@@ -108,6 +109,9 @@ const App: React.FC = () => {
   };
 
   const initGame = (city: City) => {
+    const hs = parseInt(localStorage.getItem(`high_score_${city.id}`) || '0');
+    setHighScore(hs);
+
     const initialStations: Station[] = city.initialStations.map(s => {
       const pos = project(s.lat, s.lon, city);
       return { ...pos, id: s.id, type: s.type, name: s.name, waitingPassengers: [], timer: 0 };
@@ -160,9 +164,23 @@ const App: React.FC = () => {
   }, [currentCity]);
 
   useEffect(() => {
-    const pInt = setInterval(() => engineRef.current?.spawnPassenger(), GAME_CONFIG.spawnRate);
-    const sInt = setInterval(() => engineRef.current?.spawnStation(window.innerWidth, window.innerHeight, project), GAME_CONFIG.stationSpawnRate);
-    return () => { clearInterval(pInt); clearInterval(sInt); };
+    let passengerTimeout: any;
+    const spawnPassengerLoop = () => {
+      if (engineRef.current) {
+        engineRef.current.spawnPassenger();
+        passengerTimeout = setTimeout(spawnPassengerLoop, engineRef.current.getDynamicSpawnRate());
+      }
+    };
+    passengerTimeout = setTimeout(spawnPassengerLoop, GAME_CONFIG.spawnRate);
+
+    const stationInterval = setInterval(() => {
+      if (engineRef.current) engineRef.current.spawnStation(window.innerWidth, window.innerHeight, project);
+    }, GAME_CONFIG.stationSpawnRate);
+
+    return () => {
+      clearTimeout(passengerTimeout);
+      clearInterval(stationInterval);
+    };
   }, [currentCity]);
 
   const onWheel = (e: React.WheelEvent) => {
@@ -227,7 +245,7 @@ const App: React.FC = () => {
       ctx.closePath(); ctx.fill();
     });
 
-    // Lines with Snapping
+    // Lines
     lines.forEach(line => {
       if (line.stations.length < 2) return;
       line.stations.forEach((sid, idx) => {
@@ -260,7 +278,7 @@ const App: React.FC = () => {
         }
       });
 
-      // Trains on Snapped Paths
+      // Trains
       line.trains.forEach(train => {
         const safeIdx = Math.max(0, Math.min(train.nextStationIndex, line.stations.length - 1));
         const fromIdx = train.direction === 1 ? safeIdx - 1 : safeIdx + 1;
@@ -269,7 +287,17 @@ const App: React.FC = () => {
         const toS = stations.find(s => s.id === line.stations[safeIdx]);
 
         if (fromS && toS) {
-          const pathPoints = [fromS, ...getBentPath(fromS, toS)];
+          // Fix: Ensure path consistency between forward and backward movement
+          // We always generate the path from low index station to high index station.
+          const isForwardInArray = safeFromIdx < safeIdx;
+          const pA = isForwardInArray ? fromS : toS;
+          const pB = isForwardInArray ? toS : fromS;
+          
+          let pathPoints = [pA, ...getBentPath(pA, pB)];
+          if (!isForwardInArray) {
+            pathPoints.reverse();
+          }
+
           const totalLength = pathPoints.reduce((acc, p, i) => i === 0 ? 0 : acc + getDistance(pathPoints[i-1], p), 0);
           let targetDist = train.progress * totalLength;
           let currentDist = 0;
@@ -305,7 +333,7 @@ const App: React.FC = () => {
       });
     });
 
-    // Ghost Line Snapping
+    // Ghost Line (Snapped)
     if (isDragging && dragStart && dragCurrent) {
       ctx.strokeStyle = THEME.lineColors[activeLineIdx];
       ctx.lineWidth = THEME.lineWidth;
@@ -475,7 +503,7 @@ const App: React.FC = () => {
         <div className="flex flex-col gap-4 pointer-events-auto">
           <div>
             <h1 className="text-4xl font-black tracking-tighter text-[#2F3436]">{currentCity.name.toUpperCase()}</h1>
-            <p className="text-[10px] font-bold text-[#2F3436]/40 uppercase tracking-[0.4em]">Day {Math.floor(gameState.daysElapsed) + 1}</p>
+            <p className="text-[10px] font-bold text-[#2F3436]/40 uppercase tracking-[0.4em]">Day {Math.floor(gameState.daysElapsed) + 1} • High: {highScore}</p>
           </div>
           <div className="flex gap-2 bg-white/60 backdrop-blur p-1 rounded-full border border-black/5 self-start shadow-sm">
             {CITIES.map(c => (
@@ -603,8 +631,8 @@ const App: React.FC = () => {
             <h2 className="text-7xl font-black tracking-tighter text-[#2F3436] mb-6">LINE FAILURE</h2>
             <p className="text-xl text-[#2F3436]/40 mb-14 font-medium max-w-sm mx-auto">Congestion in {currentCity.name} led to system-wide gridlock.</p>
             <div className="mb-14">
-              <p className="text-[10px] uppercase tracking-[0.5em] font-black text-black/20 mb-3">Total Efficiency</p>
-              <p className="text-9xl font-thin text-[#2F3436] tracking-tighter">{gameState.score}</p>
+              <p className="text-[10px] uppercase tracking-[0.5em] font-black text-black/20 mb-3">Score • Record</p>
+              <p className="text-9xl font-thin text-[#2F3436] tracking-tighter">{gameState.score} <span className="text-2xl font-black text-black/20">/ {highScore}</span></p>
             </div>
             <button onClick={() => window.location.reload()} className="bg-[#2F3436] text-white px-24 py-7 rounded-full font-black uppercase tracking-[0.3em] text-xs hover:bg-black transition-all shadow-xl active:scale-95">Restart Network</button>
           </div>
