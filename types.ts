@@ -55,10 +55,12 @@ export interface GameState {
   stations: Station[];
   lines: TransitLine[];
   score: number;
+  level: number;
   gameActive: boolean;
-  timeScale: number; // 1 for normal, 2 for fast
+  timeScale: number;
   daysElapsed: number;
-  nextRewardIn: number; // Progress towards next reward
+  nextRewardIn: number;
+  remainingTime: number; // For the 10-minute countdown
   resources: {
     lines: number;
     trains: number;

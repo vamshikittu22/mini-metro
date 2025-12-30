@@ -31,16 +31,26 @@ export class GameEngine {
     this.updateTime(dt);
     this.updateTrains(dt);
     this.updateStations(dt);
+    this.updateLevel();
     this.checkFailure();
   }
 
   updateTime(dt: number) {
     this.state.daysElapsed += dt / 60000;
     this.state.nextRewardIn -= dt;
+    this.state.remainingTime -= dt;
     
     if (this.state.nextRewardIn <= 0) {
       this.giveReward();
       this.state.nextRewardIn = 60000;
+    }
+  }
+
+  updateLevel() {
+    // Level up based on score or time
+    const newLevel = Math.floor(this.state.score / 150) + 1;
+    if (newLevel > this.state.level) {
+      this.state.level = newLevel;
     }
   }
 
@@ -85,15 +95,8 @@ export class GameEngine {
       return true;
     });
 
-    // Crowd-aware loading:
-    // Passengers favor lines with less crowded trains.
-    // In this simplified model, if a station is crowded, we check if this train 
-    // is part of a "less crowded" fleet on this specific line.
     const availableSpace = train.capacity - train.passengers.length;
     if (availableSpace > 0 && station.waitingPassengers.length > 0) {
-      // Basic crowd-aware logic: if train is already mostly full, it might "skip" 
-      // some passengers to leave room for high-priority transfers, 
-      // but here we just load based on availability.
       const toLoad = station.waitingPassengers.splice(0, availableSpace);
       train.passengers.push(...toLoad);
     }
@@ -137,7 +140,6 @@ export class GameEngine {
 
   updateStations(dt: number) {
     this.state.stations.forEach(station => {
-      // Failure condition: too many passengers
       if (station.waitingPassengers.length >= GAME_CONFIG.maxPassengers) {
         station.timer += dt / THEME.timerThreshold;
       } else {
@@ -147,7 +149,13 @@ export class GameEngine {
   }
 
   checkFailure() {
+    // Gridlock failure
     if (this.state.stations.some(s => s.timer >= 1)) {
+      this.state.gameActive = false;
+      this.saveHighScore();
+    }
+    // Time out failure
+    if (this.state.remainingTime <= 0) {
       this.state.gameActive = false;
       this.saveHighScore();
     }
@@ -162,9 +170,10 @@ export class GameEngine {
   }
 
   getDynamicSpawnRate() {
-    // Difficulty scaling: spawn rate increases with score and time
-    const difficultyMultiplier = 1 + (this.state.daysElapsed * 0.2) + (this.state.score * 0.005);
-    return Math.max(800, GAME_CONFIG.spawnRate / difficultyMultiplier);
+    // Scaling based on level
+    const levelMultiplier = 1 + (this.state.level * 0.25);
+    const difficultyMultiplier = levelMultiplier + (this.state.daysElapsed * 0.1);
+    return Math.max(600, GAME_CONFIG.spawnRate / difficultyMultiplier);
   }
 
   spawnPassenger() {
@@ -173,8 +182,6 @@ export class GameEngine {
     const availableTypes = Array.from(new Set(this.state.stations.map(s => s.type))).filter(t => t !== startStation.type);
     if (availableTypes.length === 0) return;
 
-    // Crowd-aware routing preference: 
-    // In a more complex model, we'd check line loads here.
     const sortedTypes = availableTypes.map(type => {
       const closestStation = this.state.stations
         .filter(s => s.type === type)
@@ -193,11 +200,16 @@ export class GameEngine {
   spawnStation(width: number, height: number, projectFn: any) {
     if (!this.state.gameActive) return;
     const city = CITIES.find(c => c.id === this.state.cityId) || CITIES[0];
-    const initialTypes = Array.from(new Set(city.initialStations.map(s => s.type)));
+    
+    // As level increases, add more station types to the pool
+    const allTypes: StationType[] = ['circle', 'square', 'triangle', 'pentagon', 'star'];
+    const typePoolCount = Math.min(allTypes.length, 2 + this.state.level);
+    const availableTypes = allTypes.slice(0, typePoolCount);
 
     for (let attempt = 0; attempt < 30; attempt++) {
-      const spawnScale = 0.45 + (this.state.daysElapsed * 0.05);
-      const range = Math.min(0.85, spawnScale);
+      // Station spawning spreads out more as level increases
+      const spawnScale = 0.45 + (this.state.level * 0.05);
+      const range = Math.min(0.9, spawnScale);
       
       const lat = city.bounds.minLat + (0.5 - range/2 + Math.random() * range) * (city.bounds.maxLat - city.bounds.minLat);
       const lon = city.bounds.minLon + (0.5 - range/2 + Math.random() * range) * (city.bounds.maxLon - city.bounds.minLon);
@@ -224,7 +236,7 @@ export class GameEngine {
       
       this.state.stations.push({
         id: this.stationIdCounter++,
-        type: initialTypes[Math.floor(Math.random() * initialTypes.length)],
+        type: availableTypes[Math.floor(Math.random() * availableTypes.length)],
         name: `${names[Math.floor(Math.random()*names.length)]}`,
         x: pos.x,
         y: pos.y,

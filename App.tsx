@@ -17,10 +17,12 @@ const App: React.FC = () => {
     stations: [],
     lines: [],
     score: 0,
+    level: 1,
     gameActive: true,
     timeScale: 1,
     daysElapsed: 0,
     nextRewardIn: 60000,
+    remainingTime: GAME_CONFIG.MAX_GAME_TIME,
     resources: { lines: 5, trains: 3, tunnels: 3 }
   });
 
@@ -122,10 +124,12 @@ const App: React.FC = () => {
       stations: initialStations,
       lines: [],
       score: 0,
+      level: 1,
       gameActive: true,
       timeScale: 1,
       daysElapsed: 0,
       nextRewardIn: 60000,
+      remainingTime: GAME_CONFIG.MAX_GAME_TIME,
       resources: { lines: 5, trains: 3, tunnels: 3 }
     });
     
@@ -287,8 +291,6 @@ const App: React.FC = () => {
         const toS = stations.find(s => s.id === line.stations[safeIdx]);
 
         if (fromS && toS) {
-          // Fix: Ensure path consistency between forward and backward movement
-          // We always generate the path from low index station to high index station.
           const isForwardInArray = safeFromIdx < safeIdx;
           const pA = isForwardInArray ? fromS : toS;
           const pB = isForwardInArray ? toS : fromS;
@@ -370,10 +372,35 @@ const App: React.FC = () => {
       else if (s.type === 'triangle') {
         ctx.moveTo(s.x, s.y - size); ctx.lineTo(s.x - size, s.y + size); ctx.lineTo(s.x + size, s.y + size); ctx.closePath();
       } else if (s.type === 'pentagon') {
-        for (let i = 0; i < 5; i++) {
-          const a = (i * 2 * Math.PI) / 5 - Math.PI / 2;
+        const aStart = -Math.PI / 2;
+        ctx.moveTo(s.x + Math.cos(aStart) * size, s.y + Math.sin(aStart) * size);
+        for (let i = 1; i < 5; i++) {
+          const a = (i * 2 * Math.PI) / 5 + aStart;
           ctx.lineTo(s.x + Math.cos(a) * size, s.y + Math.sin(a) * size);
         }
+        ctx.closePath();
+      } else if (s.type === 'star') {
+        const spikes = 5;
+        const outerRadius = size;
+        const innerRadius = size / 2;
+        let rot = Math.PI / 2 * 3;
+        let x = s.x;
+        let y = s.y;
+        let step = Math.PI / spikes;
+
+        ctx.moveTo(s.x, s.y - outerRadius)
+        for (let i = 0; i < spikes; i++) {
+            x = s.x + Math.cos(rot) * outerRadius;
+            y = s.y + Math.sin(rot) * outerRadius;
+            ctx.lineTo(x, y)
+            rot += step
+
+            x = s.x + Math.cos(rot) * innerRadius;
+            y = s.y + Math.sin(rot) * innerRadius;
+            ctx.lineTo(x, y)
+            rot += step
+        }
+        ctx.lineTo(s.x, s.y - outerRadius)
         ctx.closePath();
       }
       ctx.fill(); ctx.stroke();
@@ -495,6 +522,12 @@ const App: React.FC = () => {
     setIsDragging(false); setDragStart(null); setDragCurrent(null);
   };
 
+  const formatTime = (ms: number) => {
+    const mins = Math.floor(Math.max(0, ms) / 60000);
+    const secs = Math.floor((Math.max(0, ms) % 60000) / 1000);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
   const selectedStation = selectedStationId ? gameState.stations.find(s => s.id === selectedStationId) : null;
 
   return (
@@ -502,16 +535,24 @@ const App: React.FC = () => {
       <div className="absolute top-0 left-0 w-full p-8 flex justify-between items-start z-10 pointer-events-none">
         <div className="flex flex-col gap-4 pointer-events-auto">
           <div>
-            <h1 className="text-4xl font-black tracking-tighter text-[#2F3436]">{currentCity.name.toUpperCase()}</h1>
+            <div className="flex items-center gap-3">
+              <h1 className="text-4xl font-black tracking-tighter text-[#2F3436]">{currentCity.name.toUpperCase()}</h1>
+              <div className="bg-[#2F3436] text-white px-3 py-1 rounded-lg text-[10px] font-black uppercase">Level {gameState.level}</div>
+            </div>
             <p className="text-[10px] font-bold text-[#2F3436]/40 uppercase tracking-[0.4em]">Day {Math.floor(gameState.daysElapsed) + 1} • High: {highScore}</p>
           </div>
-          <div className="flex gap-2 bg-white/60 backdrop-blur p-1 rounded-full border border-black/5 self-start shadow-sm">
-            {CITIES.map(c => (
-              <button key={c.id} onClick={() => setCurrentCity(c)} className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase transition-all ${currentCity.id === c.id ? 'bg-[#2F3436] text-white' : 'text-[#2F3436]/40 hover:text-[#2F3436]'}`}>
-                {c.name}
-              </button>
-            ))}
+          
+          <div className="flex flex-col gap-2">
+            <span className="text-[9px] font-black text-black/20 uppercase tracking-widest">Select Destination</span>
+            <div className="flex gap-2 bg-white/60 backdrop-blur p-1 rounded-full border border-black/5 self-start shadow-sm">
+              {CITIES.map(c => (
+                <button key={c.id} onClick={() => setCurrentCity(c)} className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase transition-all ${currentCity.id === c.id ? 'bg-[#2F3436] text-white' : 'text-[#2F3436]/40 hover:text-[#2F3436]'}`}>
+                  {c.name}
+                </button>
+              ))}
+            </div>
           </div>
+
           <button 
             onClick={() => { setInspectMode(!inspectMode); setSelectedStationId(null); }}
             className={`mt-2 px-6 py-2 rounded-full text-[10px] font-black uppercase tracking-widest transition-all self-start shadow-sm pointer-events-auto ${inspectMode ? 'bg-blue-500 text-white' : 'bg-white/60 text-[#2F3436]/40 border border-black/5 hover:text-[#2F3436]'}`}
@@ -521,6 +562,13 @@ const App: React.FC = () => {
         </div>
         
         <div className="flex gap-8 items-center pointer-events-auto">
+          <div className="text-center bg-white/60 backdrop-blur px-6 py-2 rounded-3xl border border-black/5 shadow-sm">
+             <p className="text-[9px] font-black text-black/20 uppercase tracking-widest">Time Remaining</p>
+             <p className={`text-2xl font-black tabular-nums tracking-tighter ${gameState.remainingTime < 30000 ? 'text-red-500 animate-pulse' : 'text-[#2F3436]'}`}>
+                {formatTime(gameState.remainingTime)}
+             </p>
+          </div>
+          
           <div className="flex gap-2 bg-white/60 backdrop-blur p-2 rounded-full border border-black/5 shadow-sm">
             <button onClick={() => engineRef.current && (engineRef.current.state.timeScale = 1)} className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${gameState.timeScale === 1 ? 'bg-[#2F3436] text-white' : 'text-[#2F3436]/40'}`}>
               <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
@@ -533,19 +581,19 @@ const App: React.FC = () => {
             <p className="text-[10px] uppercase tracking-[0.4em] text-[#2F3436]/40 font-black">Commuters</p>
             <p className="text-5xl font-light tabular-nums text-[#2F3436] tracking-tighter">{gameState.score}</p>
           </div>
-          <div className="flex gap-2 bg-white/60 backdrop-blur p-2 rounded-full border border-black/5 shadow-sm">
+          <div className="flex flex-wrap gap-2 max-w-[200px] bg-white/60 backdrop-blur p-2 rounded-3xl border border-black/5 shadow-sm justify-center">
             {THEME.lineColors.map((color, idx) => (
-              <button key={idx} onClick={() => setActiveLineIdx(idx)} className={`w-8 h-8 rounded-full border-2 transition-all ${activeLineIdx === idx ? 'scale-110 shadow border-[#2F3436]' : 'opacity-20 border-transparent'}`} style={{ backgroundColor: color }} />
+              <button key={idx} onClick={() => setActiveLineIdx(idx)} className={`w-6 h-6 rounded-full border-2 transition-all ${activeLineIdx === idx ? 'scale-110 shadow-md border-[#2F3436]' : 'opacity-30 border-transparent hover:opacity-60'}`} style={{ backgroundColor: color }} />
             ))}
           </div>
         </div>
       </div>
 
       <div className="absolute top-48 right-8 z-20 flex flex-col gap-3 pointer-events-auto">
-        <button onClick={requestDeepStrategy} className="bg-[#2F3436] text-white p-3 rounded-full shadow-xl hover:scale-110 active:scale-95 transition-all flex items-center justify-center">
+        <button onClick={requestDeepStrategy} title="Analyze Network Topology (Deep Thinking)" className="bg-[#2F3436] text-white p-3 rounded-full shadow-xl hover:scale-110 active:scale-95 transition-all flex items-center justify-center">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 2a10 10 0 1 0 10 10 4 4 0 0 1-5-3.5A4 4 0 0 1 12 5z"/><circle cx="12" cy="12" r="3"/></svg>
         </button>
-        <button onClick={requestLocalAdvice} className="bg-[#00A8FF] text-white p-3 rounded-full shadow-xl hover:scale-110 active:scale-95 transition-all flex items-center justify-center">
+        <button onClick={requestLocalAdvice} title="Local Geographical Advice (Maps Grounded)" className="bg-[#00A8FF] text-white p-3 rounded-full shadow-xl hover:scale-110 active:scale-95 transition-all flex items-center justify-center">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
         </button>
       </div>
@@ -628,8 +676,14 @@ const App: React.FC = () => {
       {!gameState.gameActive && (
         <div className="absolute inset-0 bg-[#F8F4EE]/90 backdrop-blur-xl flex items-center justify-center z-50">
           <div className="text-center p-20 bg-white rounded-[5rem] shadow-2xl border border-black/5 animate-in zoom-in-95 duration-500">
-            <h2 className="text-7xl font-black tracking-tighter text-[#2F3436] mb-6">LINE FAILURE</h2>
-            <p className="text-xl text-[#2F3436]/40 mb-14 font-medium max-w-sm mx-auto">Congestion in {currentCity.name} led to system-wide gridlock.</p>
+            <h2 className="text-7xl font-black tracking-tighter text-[#2F3436] mb-6">
+              {gameState.remainingTime <= 0 ? 'TIME EXPIRED' : 'LINE FAILURE'}
+            </h2>
+            <p className="text-xl text-[#2F3436]/40 mb-14 font-medium max-w-sm mx-auto">
+              {gameState.remainingTime <= 0 
+                ? 'Your 10-minute shift has ended. Excellent service.' 
+                : `Congestion in ${currentCity.name} led to system-wide gridlock.`}
+            </p>
             <div className="mb-14">
               <p className="text-[10px] uppercase tracking-[0.5em] font-black text-black/20 mb-3">Score • Record</p>
               <p className="text-9xl font-thin text-[#2F3436] tracking-tighter">{gameState.score} <span className="text-2xl font-black text-black/20">/ {highScore}</span></p>
