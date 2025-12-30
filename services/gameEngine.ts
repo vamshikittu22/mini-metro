@@ -2,13 +2,13 @@ import {
   GameState, Station, TransitLine, Train, Passenger, StationType, CITIES, City 
 } from '../types';
 import { GAME_CONFIG, THEME } from '../constants';
-import { getDistance, isSegmentCrossingWater, distToSegment } from './geometry';
+import { getDistance, isSegmentCrossingWater } from './geometry';
 
 export class GameEngine {
   state: GameState;
   lastUpdate: number = 0;
   passengerIdCounter: number = 0;
-  stationIdCounter: number = 10;
+  stationIdCounter: number = 100;
   
   constructor(initialState: GameState) {
     this.state = initialState;
@@ -52,6 +52,7 @@ export class GameEngine {
     this.state.resources.lines += 1;
     this.state.resources.trains += 2;
     this.state.resources.tunnels += 2;
+    this.state.resources.wagons += 3;
   }
 
   getDynamicSpawnRate() {
@@ -181,7 +182,8 @@ export class GameEngine {
       }
     });
 
-    const availableSpace = train.capacity - train.passengers.length;
+    const totalCapacity = GAME_CONFIG.trainCapacity * (1 + train.wagons);
+    const availableSpace = totalCapacity - train.passengers.length;
     if (availableSpace > 0 && station.waitingPassengers.length > 0) {
       const boardable = station.waitingPassengers.filter(p => p.requiredLineId === line.id);
       const toLoad = boardable.slice(0, availableSpace);
@@ -190,39 +192,27 @@ export class GameEngine {
       train.passengers.push(...toLoad);
     }
 
-    // Pathing logic for loops and lines
+    // Pathing logic
     const isLoop = line.stations.length > 2 && line.stations[0] === line.stations[line.stations.length - 1];
     if (isLoop) {
-      // Loop: just keep incrementing/decrementing and wrap around
       if (train.direction === 1) {
-        if (train.nextStationIndex === line.stations.length - 1) {
-          train.nextStationIndex = 1; // 0 is same as last, so skip to 1
-        } else {
-          train.nextStationIndex++;
-        }
+        if (train.nextStationIndex === line.stations.length - 1) train.nextStationIndex = 1;
+        else train.nextStationIndex++;
       } else {
-        if (train.nextStationIndex === 0) {
-          train.nextStationIndex = line.stations.length - 2;
-        } else {
-          train.nextStationIndex--;
-        }
+        if (train.nextStationIndex === 0) train.nextStationIndex = line.stations.length - 2;
+        else train.nextStationIndex--;
       }
     } else {
-      // Non-loop: Bounce at ends
       if (train.direction === 1) {
         if (train.nextStationIndex === line.stations.length - 1) {
           train.direction = -1;
           train.nextStationIndex--;
-        } else {
-          train.nextStationIndex++;
-        }
+        } else train.nextStationIndex++;
       } else {
         if (train.nextStationIndex === 0) {
           train.direction = 1;
           train.nextStationIndex++;
-        } else {
-          train.nextStationIndex--;
-        }
+        } else train.nextStationIndex--;
       }
     }
     train.nextStationIndex = Math.max(0, Math.min(train.nextStationIndex, line.stations.length - 1));
@@ -265,15 +255,6 @@ export class GameEngine {
         else { p.requiredLineId = undefined; p.nextTransferStationId = undefined; }
       });
     });
-    this.state.lines.forEach(l => {
-      l.trains.forEach(t => {
-        t.passengers.forEach(p => {
-          const currentStationId = l.stations[t.nextStationIndex];
-          const leg = this.findNextLeg(currentStationId, p.targetType);
-          if (leg) { p.requiredLineId = leg.lineId; p.nextTransferStationId = leg.transferStationId; }
-        });
-      });
-    });
   }
 
   spawnStation(width: number, height: number, projectFn: any) {
@@ -289,26 +270,10 @@ export class GameEngine {
       const lon = city.bounds.minLon + (0.5 - range/2 + Math.random() * range) * (city.bounds.maxLon - city.bounds.minLon);
       const pos = projectFn(lat, lon, city);
       
-      // Strict distance check from other stations
       const isTooCloseToStation = this.state.stations.some(s => getDistance(s, pos) < 70);
       if (isTooCloseToStation) continue;
 
-      // Strict distance check from lines
-      let isTooCloseToLine = false;
-      for (const line of this.state.lines) {
-        for (let i = 0; i < line.stations.length - 1; i++) {
-          const s1 = this.state.stations.find(s => s.id === line.stations[i]);
-          const s2 = this.state.stations.find(s => s.id === line.stations[i+1]);
-          if (s1 && s2 && distToSegment(pos, s1, s2) < 40) {
-            isTooCloseToLine = true;
-            break;
-          }
-        }
-        if (isTooCloseToLine) break;
-      }
-      if (isTooCloseToLine) continue;
-
-      const names = ['Westminster', 'Soho', 'Camden', 'Greenwich', 'Chelsea', 'Islington', 'Hackney', 'Brixton', 'Peckham', 'Hampstead', 'Ealing', 'Richmond', 'Lambeth', 'Southwark', 'Tower Hamlets', 'Haringey', 'Newham', 'Waltham Forest'];
+      const names = ['Ginza', 'Shibuya', 'Broadway', 'Wall St', 'Piccadilly', 'Oxford', 'Kreuzberg', 'Mitte', 'Orchard', 'Newton', 'Westminster', 'Soho', 'Harajuku', 'Shinjuku', 'Brooklyn', 'Chelsea', 'Montmartre', 'Bastille'];
       this.state.stations.push({
         id: this.stationIdCounter++,
         type: availableTypes[Math.floor(Math.random() * availableTypes.length)],
@@ -325,10 +290,49 @@ export class GameEngine {
       line.trains.push({
         id: Date.now() + Math.random(),
         lineId: lineId,
-        nextStationIndex: Math.floor(line.stations.length / 2) || 1,
-        progress: 0, direction: 1, passengers: [], capacity: GAME_CONFIG.trainCapacity
+        nextStationIndex: 1,
+        progress: 0,
+        direction: 1,
+        passengers: [],
+        capacity: GAME_CONFIG.trainCapacity,
+        wagons: 0
       });
       this.state.resources.trains--;
+    }
+  }
+
+  removeTrainFromLine(lineId: number, trainId: number) {
+    const line = this.state.lines.find(l => l.id === lineId);
+    if (!line) return;
+    const idx = line.trains.findIndex(t => t.id === trainId);
+    if (idx !== -1) {
+      const train = line.trains[idx];
+      this.state.resources.trains++;
+      this.state.resources.wagons += train.wagons;
+      // Re-route passengers back to nearest station
+      const station = this.state.stations.find(s => s.id === line.stations[train.nextStationIndex]);
+      if (station) station.waitingPassengers.push(...train.passengers);
+      line.trains.splice(idx, 1);
+    }
+  }
+
+  addWagonToTrain(lineId: number, trainId: number) {
+    const line = this.state.lines.find(l => l.id === lineId);
+    if (!line) return;
+    const train = line.trains.find(t => t.id === trainId);
+    if (train && this.state.resources.wagons > 0) {
+      train.wagons++;
+      this.state.resources.wagons--;
+    }
+  }
+
+  removeWagonFromTrain(lineId: number, trainId: number) {
+    const line = this.state.lines.find(l => l.id === lineId);
+    if (!line) return;
+    const train = line.trains.find(t => t.id === trainId);
+    if (train && train.wagons > 0) {
+      train.wagons--;
+      this.state.resources.wagons++;
     }
   }
 
@@ -337,6 +341,8 @@ export class GameEngine {
     if (lineIdx !== -1) {
       const line = this.state.lines[lineIdx];
       const city = CITIES.find(c => c.id === this.state.cityId) || CITIES[0];
+      
+      // Reclaim tunnels
       for (let i = 0; i < line.stations.length - 1; i++) {
         const s1 = this.state.stations.find(s => s.id === line.stations[i]);
         const s2 = this.state.stations.find(s => s.id === line.stations[i+1]);
@@ -344,13 +350,12 @@ export class GameEngine {
           this.state.resources.tunnels++;
         }
       }
-      line.trains.forEach(train => {
-         const currentStationId = line.stations[Math.max(0, train.nextStationIndex - (train.direction === 1 ? 1 : 0))];
-         const station = this.state.stations.find(s => s.id === currentStationId);
-         if (station) station.waitingPassengers.push(...train.passengers);
-      });
+
       this.state.resources.lines++;
-      this.state.resources.trains += line.trains.length;
+      line.trains.forEach(t => {
+        this.state.resources.trains++;
+        this.state.resources.wagons += t.wagons;
+      });
       this.state.lines.splice(lineIdx, 1);
       this.refreshAllPassengerRoutes();
     }
@@ -359,39 +364,17 @@ export class GameEngine {
   removeSegment(lineId: number, idxA: number, idxB: number) {
     const line = this.state.lines.find(l => l.id === lineId);
     if (!line) return;
+    
     const city = CITIES.find(c => c.id === this.state.cityId) || CITIES[0];
-    const fromHead = idxA < (line.stations.length / 2);
-    let stationsToRemove: number[] = [];
-    if (fromHead) {
-      stationsToRemove = line.stations.splice(0, idxA + 1);
-      line.trains.forEach(train => {
-        train.nextStationIndex = Math.max(0, train.nextStationIndex - stationsToRemove.length);
-        if (train.nextStationIndex < 0) { train.nextStationIndex = 0; train.progress = 0; }
-      });
-    } else {
-      stationsToRemove = line.stations.splice(idxB);
-      line.trains.forEach(train => {
-        if (train.nextStationIndex >= idxB) {
-          train.nextStationIndex = line.stations.length - 1;
-          train.progress = 0;
-        }
-      });
+    const s1 = this.state.stations.find(s => s.id === line.stations[idxA]);
+    const s2 = this.state.stations.find(s => s.id === line.stations[idxB]);
+    
+    if (s1 && s2 && isSegmentCrossingWater(s1, s2, city)) {
+      this.state.resources.tunnels++;
     }
-    for (let i = 0; i < stationsToRemove.length - 1; i++) {
-      const s1 = this.state.stations.find(s => s.id === stationsToRemove[i]);
-      const s2 = this.state.stations.find(s => s.id === stationsToRemove[i+1]);
-      if (s1 && s2 && isSegmentCrossingWater(s1, s2, city)) this.state.resources.tunnels++;
-    }
-    if (fromHead && line.stations.length > 0) {
-        const sCut1 = this.state.stations.find(s => s.id === stationsToRemove[stationsToRemove.length-1]);
-        const sCut2 = this.state.stations.find(s => s.id === line.stations[0]);
-        if (sCut1 && sCut2 && isSegmentCrossingWater(sCut1, sCut2, city)) this.state.resources.tunnels++;
-    } else if (!fromHead && line.stations.length > 0) {
-        const sCut1 = this.state.stations.find(s => s.id === line.stations[line.stations.length-1]);
-        const sCut2 = this.state.stations.find(s => s.id === stationsToRemove[0]);
-        if (sCut1 && sCut2 && isSegmentCrossingWater(sCut1, sCut2, city)) this.state.resources.tunnels++;
-    }
+
+    line.stations.splice(idxB, 1);
     if (line.stations.length < 2) this.removeLine(lineId);
-    this.refreshAllPassengerRoutes();
+    else this.refreshAllPassengerRoutes();
   }
 }
