@@ -1,0 +1,5 @@
+{
+  "name": "Metro Simulator",
+  "description": "A high-fidelity minimalist transit simulation game inspired by Mini Metro, featuring real-world London coordinates, graph-based pathfinding, and Swiss-style UI design.",
+  "requestFramePermissions": []
+}
