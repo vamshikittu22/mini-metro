@@ -11,13 +11,15 @@ export interface Station extends Point {
   type: StationType;
   name: string;
   waitingPassengers: Passenger[];
-  timer: number; // 0 to 1 for failure countdown
+  timer: number; // 0 to 1 for visual feedback only
 }
 
 export interface Passenger {
   id: number;
   targetType: StationType;
   spawnTime: number;
+  nextTransferStationId?: number; // Where to alight next
+  requiredLineId?: number;        // Which line to board
 }
 
 export interface TransitLine {
@@ -55,12 +57,11 @@ export interface GameState {
   stations: Station[];
   lines: TransitLine[];
   score: number;
-  level: number;
+  level: number; // Maps to "Week"
   gameActive: boolean;
   timeScale: number;
   daysElapsed: number;
   nextRewardIn: number;
-  remainingTime: number; // For the 10-minute countdown
   resources: {
     lines: number;
     trains: number;
@@ -142,5 +143,3 @@ export const CITIES: City[] = [
     ]
   }
 ];
-
-export const CITY_DATA = CITIES[0];
