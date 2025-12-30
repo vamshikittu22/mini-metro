@@ -2,13 +2,13 @@ import {
   GameState, Station, TransitLine, Train, Passenger, StationType, CITIES, City 
 } from '../types';
 import { GAME_CONFIG, THEME } from '../constants';
-import { getDistance, isSegmentCrossingWater } from './geometry';
+import { getDistance, isSegmentCrossingWater, project } from './geometry';
 
 export class GameEngine {
   state: GameState;
   lastUpdate: number = 0;
   passengerIdCounter: number = 0;
-  stationIdCounter: number = 100;
+  stationIdCounter: number = 1000;
   
   constructor(initialState: GameState) {
     this.state = initialState;
@@ -52,6 +52,7 @@ export class GameEngine {
     this.state.resources.lines += 1;
     this.state.resources.trains += 2;
     this.state.resources.tunnels += 2;
+    this.state.resources.bridges += 1;
     this.state.resources.wagons += 3;
   }
 
@@ -248,6 +249,7 @@ export class GameEngine {
     }
   }
 
+  // Fix: Line 256 error. Corrected 't.type' to 's.type' in the map function to fix 'Cannot find name t'.
   spawnPassenger() {
     if (!this.state.gameActive || !this.state.autoSpawn || this.state.stations.length < 2) return;
     const startStation = this.state.stations[Math.floor(Math.random() * this.state.stations.length)];
@@ -297,9 +299,42 @@ export class GameEngine {
     }
   }
 
+  addManualStation(type: StationType, x: number, y: number) {
+    if (this.state.mode !== 'CREATIVE') return;
+    const names = ['Terminal', 'Plaza', 'Point', 'Hub', 'Nexus', 'Quarter', 'Gardens', 'Park', 'Street', 'Road', 'Avenue', 'Central', 'Bridge', 'Tower'];
+    this.state.stations.push({
+      id: this.stationIdCounter++,
+      type,
+      name: `${names[Math.floor(Math.random()*names.length)]}`,
+      x, y, waitingPassengers: [], timer: 0
+    });
+  }
+
+  removeStation(id: number) {
+    const sIdx = this.state.stations.findIndex(s => s.id === id);
+    if (sIdx === -1) return;
+
+    // Cleanup lines that include this station
+    const linesToCleanup = this.state.lines.filter(l => l.stations.includes(id));
+    linesToCleanup.forEach(line => {
+      const sPos = line.stations.indexOf(id);
+      if (sPos !== -1) {
+        // Simple logic: if station is in middle, remove line or break?
+        // Mini Metro behavior: remove station from line and reconnect ends
+        line.stations.splice(sPos, 1);
+        if (line.stations.length < 2) {
+          this.removeLine(line.id);
+        }
+      }
+    });
+
+    this.state.stations.splice(sIdx, 1);
+    this.refreshAllPassengerRoutes();
+  }
+
   addTrainToLine(lineId: number) {
     const line = this.state.lines.find(l => l.id === lineId);
-    if (line && this.state.resources.trains > 0) {
+    if (line && (this.state.resources.trains > 0 || this.state.mode === 'CREATIVE')) {
       line.trains.push({
         id: Date.now() + Math.random(),
         lineId: lineId,
@@ -310,7 +345,7 @@ export class GameEngine {
         capacity: GAME_CONFIG.trainCapacity,
         wagons: 0
       });
-      this.state.resources.trains--;
+      if (this.state.mode !== 'CREATIVE') this.state.resources.trains--;
     }
   }
 
@@ -320,8 +355,10 @@ export class GameEngine {
     const idx = line.trains.findIndex(t => t.id === trainId);
     if (idx !== -1) {
       const train = line.trains[idx];
-      this.state.resources.trains++;
-      this.state.resources.wagons += train.wagons;
+      if (this.state.mode !== 'CREATIVE') {
+        this.state.resources.trains++;
+        this.state.resources.wagons += train.wagons;
+      }
       // Re-route passengers back to nearest station
       const station = this.state.stations.find(s => s.id === line.stations[train.nextStationIndex]);
       if (station) station.waitingPassengers.push(...train.passengers);
@@ -333,9 +370,9 @@ export class GameEngine {
     const line = this.state.lines.find(l => l.id === lineId);
     if (!line) return;
     const train = line.trains.find(t => t.id === trainId);
-    if (train && this.state.resources.wagons > 0) {
+    if (train && (this.state.resources.wagons > 0 || this.state.mode === 'CREATIVE')) {
       train.wagons++;
-      this.state.resources.wagons--;
+      if (this.state.mode !== 'CREATIVE') this.state.resources.wagons--;
     }
   }
 
@@ -345,7 +382,7 @@ export class GameEngine {
     const train = line.trains.find(t => t.id === trainId);
     if (train && train.wagons > 0) {
       train.wagons--;
-      this.state.resources.wagons++;
+      if (this.state.mode !== 'CREATIVE') this.state.resources.wagons++;
     }
   }
 
@@ -355,20 +392,23 @@ export class GameEngine {
       const line = this.state.lines[lineIdx];
       const city = CITIES.find(c => c.id === this.state.cityId) || CITIES[0];
       
-      // Reclaim tunnels
-      for (let i = 0; i < line.stations.length - 1; i++) {
-        const s1 = this.state.stations.find(s => s.id === line.stations[i]);
-        const s2 = this.state.stations.find(s => s.id === line.stations[i+1]);
-        if (s1 && s2 && isSegmentCrossingWater(s1, s2, city)) {
-          this.state.resources.tunnels++;
+      // Reclaim tunnels/bridges if not in creative
+      if (this.state.mode !== 'CREATIVE') {
+        for (let i = 0; i < line.stations.length - 1; i++) {
+          const s1 = this.state.stations.find(s => s.id === line.stations[i]);
+          const s2 = this.state.stations.find(s => s.id === line.stations[i+1]);
+          if (s1 && s2 && isSegmentCrossingWater(s1, s2, city)) {
+            if (line.id % 2 === 0) this.state.resources.tunnels++;
+            else this.state.resources.bridges++;
+          }
         }
+        this.state.resources.lines++;
+        line.trains.forEach(t => {
+          this.state.resources.trains++;
+          this.state.resources.wagons += t.wagons;
+        });
       }
 
-      this.state.resources.lines++;
-      line.trains.forEach(t => {
-        this.state.resources.trains++;
-        this.state.resources.wagons += t.wagons;
-      });
       this.state.lines.splice(lineIdx, 1);
       this.refreshAllPassengerRoutes();
     }
@@ -382,8 +422,9 @@ export class GameEngine {
     const s1 = this.state.stations.find(s => s.id === line.stations[idxA]);
     const s2 = this.state.stations.find(s => s.id === line.stations[idxB]);
     
-    if (s1 && s2 && isSegmentCrossingWater(s1, s2, city)) {
-      this.state.resources.tunnels++;
+    if (s1 && s2 && isSegmentCrossingWater(s1, s2, city) && this.state.mode !== 'CREATIVE') {
+      if (line.id % 2 === 0) this.state.resources.tunnels++;
+      else this.state.resources.bridges++;
     }
 
     line.stations.splice(idxB, 1);

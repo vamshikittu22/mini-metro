@@ -1,10 +1,10 @@
 import React from 'react';
 import { THEME } from '../../constants';
 import { BaseButton } from '../UI/BaseButton';
-import { TransitLine, Train } from '../../types';
+import { TransitLine, Train, GameMode } from '../../types';
 
 interface ResourcePanelProps {
-  resources: { lines: number; trains: number; tunnels: number; wagons: number };
+  resources: { lines: number; trains: number; tunnels: number; bridges: number; wagons: number };
   activeLineIdx: number;
   onLineIdxChange: (idx: number) => void;
   lines: TransitLine[];
@@ -13,6 +13,7 @@ interface ResourcePanelProps {
   onAddWagon: (trainId: number) => void;
   onRemoveWagon: (trainId: number) => void;
   onDeleteLine: () => void;
+  mode: GameMode;
 }
 
 export const ResourcePanel: React.FC<ResourcePanelProps> = ({ 
@@ -24,10 +25,12 @@ export const ResourcePanel: React.FC<ResourcePanelProps> = ({
   onRemoveTrain,
   onAddWagon,
   onRemoveWagon,
-  onDeleteLine
+  onDeleteLine,
+  mode
 }) => {
   const currentLine = lines.find(l => l.id === activeLineIdx);
   const isLoop = currentLine && currentLine.stations.length > 2 && currentLine.stations[0] === currentLine.stations[currentLine.stations.length - 1];
+  const isCreative = mode === 'CREATIVE';
 
   return (
     <>
@@ -58,13 +61,15 @@ export const ResourcePanel: React.FC<ResourcePanelProps> = ({
 
       {/* INVENTORY - BOTTOM LEFT */}
       <div className="fixed bottom-8 left-8 z-50 bg-black/60 backdrop-blur-md px-6 py-4 rounded-sm border border-white/5 shadow-xl pointer-events-auto flex items-center gap-8">
-        <InventoryItem label="Lines" value={resources.lines} icon="L" />
+        <InventoryItem label="Lines" value={isCreative ? '∞' : resources.lines} icon="L" />
         <div className="w-px h-6 bg-white/5" />
-        <InventoryItem label="Trains" value={resources.trains} icon="T" />
+        <InventoryItem label="Trains" value={isCreative ? '∞' : resources.trains} icon="T" />
         <div className="w-px h-6 bg-white/5" />
-        <InventoryItem label="Cross" value={resources.tunnels} icon="C" />
+        <InventoryItem label="Tunnels" value={isCreative ? '∞' : resources.tunnels} icon="U" />
         <div className="w-px h-6 bg-white/5" />
-        <InventoryItem label="Wagons" value={resources.wagons} icon="W" />
+        <InventoryItem label="Bridges" value={isCreative ? '∞' : resources.bridges} icon="B" />
+        <div className="w-px h-6 bg-white/5" />
+        <InventoryItem label="Wagons" value={isCreative ? '∞' : resources.wagons} icon="W" />
       </div>
 
       {/* ACTIVE LINE MANAGEMENT - BOTTOM RIGHT */}
@@ -81,7 +86,11 @@ export const ResourcePanel: React.FC<ResourcePanelProps> = ({
               {currentLine?.trains.length || 0} TRAINS ACTIVE
             </span>
           </div>
-          <button onClick={onAddTrain} disabled={resources.trains === 0} className="bg-white text-black text-[10px] font-black px-4 py-1.5 uppercase tracking-tighter hover:bg-white/80 transition-colors disabled:opacity-20">
+          <button 
+            onClick={onAddTrain} 
+            disabled={!isCreative && resources.trains === 0} 
+            className="bg-white text-black text-[10px] font-black px-4 py-1.5 uppercase tracking-tighter hover:bg-white/80 transition-colors disabled:opacity-20"
+          >
             + Train
           </button>
         </div>
@@ -111,7 +120,7 @@ export const ResourcePanel: React.FC<ResourcePanelProps> = ({
                     >—</button>
                     <button 
                       onClick={() => onAddWagon(train.id)} 
-                      disabled={resources.wagons === 0}
+                      disabled={!isCreative && resources.wagons === 0}
                       className="w-6 h-6 flex items-center justify-center text-[10px] font-black disabled:opacity-10 bg-white/10 text-white rounded-sm hover:bg-white/20"
                     >+</button>
                   </div>
@@ -138,7 +147,7 @@ export const ResourcePanel: React.FC<ResourcePanelProps> = ({
   );
 };
 
-const InventoryItem = ({ label, value, icon }: { label: string; value: number; icon: string }) => (
+const InventoryItem = ({ label, value, icon }: { label: string; value: number | string; icon: string }) => (
   <div className="flex items-center gap-3">
     <div className="w-6 h-6 rounded-sm bg-white flex items-center justify-center text-[10px] font-black text-black">
       {icon}

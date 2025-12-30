@@ -9,6 +9,7 @@ import { lerpColor } from './services/utils';
 import { Stats } from './components/HUD/Stats';
 import { ResourcePanel } from './components/HUD/ResourcePanel';
 import { BaseButton } from './components/UI/BaseButton';
+import { CreativeToolbar } from './components/HUD/CreativeToolbar';
 
 type AppView = 'MAIN_MENU' | 'CITY_SELECT' | 'MODE_SELECT' | 'GAME';
 
@@ -43,7 +44,7 @@ const App: React.FC = () => {
     timeScale: 1,
     daysElapsed: 0,
     nextRewardIn: 60000 * 7,
-    resources: { lines: 5, trains: 3, tunnels: 3, wagons: 5 }
+    resources: { lines: 5, trains: 3, tunnels: 3, bridges: 2, wagons: 5 }
   });
 
   const engineRef = useRef<GameEngine | null>(null);
@@ -55,12 +56,14 @@ const App: React.FC = () => {
   const [dragCurrent, setDragCurrent] = useState<Point | null>(null);
   const [activeLineIdx, setActiveLineIdx] = useState(0);
 
+  // Creative Mode state
+  const [creativeTool, setCreativeTool] = useState<'PAN' | 'ERASE' | StationType>('PAN');
+
   const screenToWorld = (sx: number, sy: number) => ({
     x: (sx - camera.x) / camera.scale,
     y: (sy - camera.y) / camera.scale
   });
 
-  // Background color memoized to prevent jitter during UI updates
   const currentBg = useMemo(() => {
     const { daysElapsed, dayNightAuto, isNightManual } = gameState;
     if (!dayNightAuto) {
@@ -73,7 +76,6 @@ const App: React.FC = () => {
     return lerpColor(DAY_CYCLE_COLORS.NIGHT, DAY_CYCLE_COLORS.SUNRISE, (t - 0.75) * 4);
   }, [gameState.daysElapsed, gameState.dayNightAuto, gameState.isNightManual]);
 
-  // Dynamic text color for high contrast against background
   const currentText = useMemo(() => {
     const isDark = currentBg.toLowerCase() === DAY_CYCLE_COLORS.NIGHT.toLowerCase() || 
                    currentBg.toLowerCase().startsWith('#1') || 
@@ -94,7 +96,7 @@ const App: React.FC = () => {
     });
     const engine = new GameEngine({
       cityId: currentCity.id, mode: selectedMode, stations: initialStations, lines: [], score: 0, level: 1, gameActive: true, autoSpawn: true, dayNightAuto: true, isNightManual: false, timeScale: 1, daysElapsed: 0, nextRewardIn: 60000 * 7,
-      resources: { lines: 5, trains: 3, tunnels: 3, wagons: 5 }
+      resources: { lines: 5, trains: 3, tunnels: 3, bridges: 2, wagons: 5 }
     });
     engineRef.current = engine;
     setGameState({ ...engine.state });
@@ -148,7 +150,7 @@ const App: React.FC = () => {
     };
     fId = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(fId);
-  }, [dimensions, camera, isDragging, isPanning, dragStart, dragCurrent, activeLineIdx, currentCity, view, currentBg]);
+  }, [dimensions, camera, isDragging, isPanning, dragStart, dragCurrent, activeLineIdx, currentCity, view, currentBg, creativeTool]);
 
   const drawShape = useCallback((ctx: CanvasRenderingContext2D, x: number, y: number, size: number, type: StationType, fill: boolean = true) => {
     ctx.beginPath();
@@ -197,6 +199,7 @@ const App: React.FC = () => {
     ctx.translate(camera.x, camera.y);
     ctx.scale(camera.scale, camera.scale);
 
+    // Grid lines
     ctx.strokeStyle = lerpColor(currentBg, currentText, 0.08);
     ctx.lineWidth = 1;
     const gridStep = 200;
@@ -212,14 +215,113 @@ const App: React.FC = () => {
       ctx.beginPath(); ctx.moveTo(startX, y); ctx.lineTo(endX, y); ctx.stroke();
     }
 
-    ctx.fillStyle = lerpColor(currentBg, '#1a2b38', 0.2);
+    // Realistic Water Body Rendering with Organic Smoothing and Animation
+    const waterBaseColor = lerpColor(currentBg, '#1a2b38', 0.12);
+    const waterDeepColor = lerpColor(currentBg, '#0d161d', 0.20);
+    const waterEdgeColor = lerpColor(currentBg, '#1a2b38', 0.22);
+    const rippleColor = lerpColor(currentBg, currentText, 0.06);
+    const specColor = lerpColor(currentBg, '#FFFFFF', 0.15); // Specular highlight
+    const time = Date.now() / 2000;
+
     currentCity.water.forEach(poly => {
+      const waterPoints = poly.map(p => project(p.lat, p.lon, currentCity));
+      if (waterPoints.length < 3) return;
+
+      const drawWaterPath = (c: CanvasRenderingContext2D) => {
+        c.moveTo(waterPoints[0].x, waterPoints[0].y);
+        for (let i = 0; i < waterPoints.length; i++) {
+          const p = waterPoints[i];
+          const next = waterPoints[(i + 1) % waterPoints.length];
+          const midX = (p.x + next.x) / 2;
+          const midY = (p.y + next.y) / 2;
+          c.quadraticCurveTo(p.x, p.y, midX, midY);
+        }
+        c.closePath();
+      };
+
+      ctx.save();
       ctx.beginPath();
-      poly.forEach((p, i) => { 
-        const pos = project(p.lat, p.lon, currentCity); 
-        if (i === 0) ctx.moveTo(pos.x, pos.y); else ctx.lineTo(pos.x, pos.y); 
-      });
-      ctx.closePath(); ctx.fill();
+      drawWaterPath(ctx);
+      ctx.strokeStyle = waterEdgeColor;
+      ctx.lineWidth = 20;
+      ctx.lineJoin = 'round';
+      ctx.stroke();
+      
+      ctx.strokeStyle = lerpColor(currentBg, waterBaseColor, 0.5);
+      ctx.lineWidth = 30;
+      ctx.stroke();
+      ctx.restore();
+
+      ctx.save();
+      ctx.beginPath();
+      drawWaterPath(ctx);
+      
+      const avgX = waterPoints.reduce((s, p) => s + p.x, 0) / waterPoints.length;
+      const avgY = waterPoints.reduce((s, p) => s + p.y, 0) / waterPoints.length;
+      const grad = ctx.createRadialGradient(avgX, avgY, 100, avgX, avgY, 1200);
+      grad.addColorStop(0, waterDeepColor);
+      grad.addColorStop(1, waterBaseColor);
+      
+      ctx.fillStyle = grad;
+      ctx.fill();
+      ctx.restore();
+
+      ctx.save();
+      ctx.beginPath();
+      drawWaterPath(ctx);
+      ctx.clip();
+      
+      const specGrad = ctx.createLinearGradient(
+        Math.cos(time * 0.2) * 2000, 
+        Math.sin(time * 0.2) * 2000, 
+        Math.cos(time * 0.2 + Math.PI) * 2000, 
+        Math.sin(time * 0.2 + Math.PI) * 2000
+      );
+      specGrad.addColorStop(0, 'rgba(255, 255, 255, 0)');
+      specGrad.addColorStop(0.45, 'rgba(255, 255, 255, 0)');
+      specGrad.addColorStop(0.5, specColor);
+      specGrad.addColorStop(0.55, 'rgba(255, 255, 255, 0)');
+      specGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+      
+      ctx.globalAlpha = 0.3;
+      ctx.fillStyle = specGrad;
+      ctx.fill();
+      ctx.restore();
+
+      ctx.save();
+      ctx.beginPath();
+      drawWaterPath(ctx);
+      ctx.clip();
+      
+      ctx.strokeStyle = rippleColor;
+      ctx.lineWidth = 2.5;
+      ctx.lineCap = 'round';
+      
+      const rippleSpacing = 70;
+      const rxStart = Math.floor((-camera.x / camera.scale) / rippleSpacing) * rippleSpacing;
+      const rxEnd = Math.ceil((dimensions.width - camera.x / camera.scale) / rippleSpacing) * rippleSpacing;
+      const ryStart = Math.floor((-camera.y / camera.scale) / rippleSpacing) * rippleSpacing;
+      const ryEnd = Math.ceil((dimensions.height - camera.y / camera.scale) / rippleSpacing) * rippleSpacing;
+
+      for (let rx = rxStart; rx <= rxEnd; rx += rippleSpacing) {
+        for (let ry = ryStart; ry <= ryEnd; ry += rippleSpacing) {
+          const noise = Math.sin(rx * 0.004 + ry * 0.003 + time) * Math.cos(ry * 0.004 - rx * 0.003 + time * 0.7);
+          
+          if (noise > 0.4) {
+            const rLen = 25 + Math.sin(time + rx * 0.05) * 12;
+            const driftX = Math.sin(time * 0.4 + ry * 0.08) * 20;
+            const driftY = Math.cos(time * 0.4 + rx * 0.08) * 10;
+            const alpha = (noise - 0.4) * 2;
+            
+            ctx.globalAlpha = Math.min(1, alpha);
+            ctx.beginPath();
+            ctx.moveTo(rx + driftX, ry + driftY);
+            ctx.lineTo(rx + driftX + rLen, ry + driftY + (Math.sin(rx + time) * 5));
+            ctx.stroke();
+          }
+        }
+      }
+      ctx.restore();
     });
 
     lines.forEach(line => {
@@ -229,6 +331,8 @@ const App: React.FC = () => {
         const s1 = stations.find(s => s.id === line.stations[idx-1]), s2 = stations.find(s => s.id === sid);
         if (s1 && s2) {
           const path = [s1, ...getBentPath(s1, s2)];
+          const crossing = isSegmentCrossingWater(s1, s2, currentCity);
+          
           ctx.beginPath(); 
           ctx.strokeStyle = line.color; 
           ctx.lineWidth = THEME.lineWidth; 
@@ -237,10 +341,46 @@ const App: React.FC = () => {
           path.slice(1).forEach(p => ctx.lineTo(p.x, p.y)); 
           ctx.stroke();
 
-          if (isSegmentCrossingWater(s1, s2, currentCity)) {
-            ctx.save(); ctx.lineCap = 'butt'; ctx.strokeStyle = currentBg; ctx.lineWidth = THEME.lineWidth / 2; ctx.setLineDash([12, 12]);
-            ctx.beginPath(); ctx.moveTo(s1.x, s1.y); path.slice(1).forEach(p => ctx.lineTo(p.x, p.y)); ctx.stroke();
-            ctx.restore();
+          if (crossing) {
+            const isTunnel = line.id % 2 === 0;
+            if (isTunnel) {
+              ctx.save();
+              ctx.lineCap = 'butt';
+              ctx.strokeStyle = currentBg;
+              ctx.lineWidth = THEME.lineWidth * 0.75;
+              ctx.setLineDash([12, 12]);
+              ctx.beginPath();
+              ctx.moveTo(s1.x, s1.y);
+              path.slice(1).forEach(p => ctx.lineTo(p.x, p.y));
+              ctx.stroke();
+              ctx.restore();
+              
+              ctx.save();
+              ctx.strokeStyle = line.color;
+              ctx.lineWidth = THEME.lineWidth * 0.25;
+              ctx.setLineDash([2, 22]);
+              ctx.beginPath();
+              ctx.moveTo(s1.x, s1.y);
+              path.slice(1).forEach(p => ctx.lineTo(p.x, p.y));
+              ctx.stroke();
+              ctx.restore();
+            } else {
+              ctx.save();
+              ctx.strokeStyle = currentText;
+              ctx.lineWidth = THEME.lineWidth * 1.35;
+              ctx.beginPath();
+              ctx.moveTo(s1.x, s1.y);
+              path.slice(1).forEach(p => ctx.lineTo(p.x, p.y));
+              ctx.stroke();
+              
+              ctx.strokeStyle = line.color;
+              ctx.lineWidth = THEME.lineWidth;
+              ctx.beginPath();
+              ctx.moveTo(s1.x, s1.y);
+              path.slice(1).forEach(p => ctx.lineTo(p.x, p.y));
+              ctx.stroke();
+              ctx.restore();
+            }
           }
         }
       });
@@ -307,6 +447,14 @@ const App: React.FC = () => {
        ctx.stroke(); ctx.setLineDash([]);
     }
 
+    // Creative mode ghost preview
+    if (gameState.mode === 'CREATIVE' && creativeTool !== 'PAN' && creativeTool !== 'ERASE' && dragCurrent && !isDragging) {
+      ctx.save();
+      ctx.globalAlpha = 0.3;
+      drawShape(ctx, dragCurrent.x, dragCurrent.y, THEME.stationSize * uiScale, creativeTool as StationType, true);
+      ctx.restore();
+    }
+
     stations.forEach(s => {
       const size = THEME.stationSize * uiScale;
       drawShape(ctx, s.x, s.y, size, s.type, true);
@@ -329,7 +477,7 @@ const App: React.FC = () => {
       if (s.timer > 0) { ctx.strokeStyle='#FF4444'; ctx.lineWidth=7*uiScale; ctx.beginPath(); ctx.arc(s.x,s.y,size+14*uiScale, -Math.PI/2, -Math.PI/2+Math.PI*2*s.timer); ctx.stroke(); }
     });
     ctx.restore();
-  }, [dimensions, gameState, camera, currentCity, isDragging, dragStart, dragCurrent, activeLineIdx, view, currentBg, currentText, drawShape]);
+  }, [dimensions, gameState, camera, currentCity, isDragging, dragStart, dragCurrent, activeLineIdx, view, currentBg, currentText, drawShape, creativeTool]);
 
   const MenuButton = ({ label, icon, onClick }: { label: string, icon?: string, onClick?: () => void }) => (
     <div className="flex items-center gap-4 group cursor-pointer" onClick={onClick}>
@@ -365,29 +513,29 @@ const App: React.FC = () => {
           <button onClick={() => setView('MAIN_MENU')} className="text-white text-xl font-black uppercase tracking-widest opacity-40 hover:opacity-100 transition-opacity">Back</button>
         </div>
         
-        <div className="flex gap-12 overflow-x-auto w-full pb-12 snap-x no-scrollbar">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-12 w-full pb-12">
           {CITIES.map(city => (
             <div 
               key={city.id} 
               onClick={() => initGame(city)}
-              className="flex-shrink-0 w-[450px] snap-center cursor-pointer group"
+              className="flex-shrink-0 cursor-pointer group"
             >
-              <h3 className="text-6xl font-black text-white mb-8 group-hover:translate-x-2 transition-transform">{city.name}</h3>
-              <div className="aspect-[4/5] bg-[#1a1a1a] border border-white/5 relative p-12 flex flex-col justify-between">
-                <div className="absolute inset-0 opacity-20 pointer-events-none">
-                  <div className="absolute top-1/2 left-0 right-0 h-1 bg-[#51A03E]" />
-                  <div className="absolute top-0 bottom-0 left-1/3 w-1 bg-[#EB2827]" />
-                  <div className="absolute top-1/4 bottom-1/4 left-1/2 w-1 bg-[#FBAE17] -rotate-45" />
+              <h3 className="text-5xl font-black text-white mb-6 group-hover:translate-x-2 transition-transform uppercase tracking-tighter">{city.name}</h3>
+              <div className="aspect-[4/3] bg-[#1a1a1a] border border-white/5 relative p-10 flex flex-col justify-between overflow-hidden rounded-sm hover:border-white/20 transition-all">
+                <div className="absolute inset-0 opacity-10 pointer-events-none">
+                   <div className="absolute top-1/2 left-0 right-0 h-1" style={{ backgroundColor: city.color }} />
+                   <div className="absolute top-0 bottom-0 left-1/3 w-1" style={{ backgroundColor: THEME.lineColors[1] }} />
+                   <div className="absolute top-1/4 bottom-1/4 left-1/2 w-1 -rotate-45" style={{ backgroundColor: THEME.lineColors[3] }} />
                 </div>
                 
                 <div className="relative z-10">
                   <div className="flex gap-2 mb-4">
-                    {THEME.lineColors.slice(0, 6).map((c, i) => (
-                      <div key={i} className="w-4 h-4 rounded-full" style={{ backgroundColor: c }} />
+                    {THEME.lineColors.slice(0, 4).map((c, i) => (
+                      <div key={i} className="w-3 h-3 rounded-full" style={{ backgroundColor: c }} />
                     ))}
                   </div>
-                  <p className="text-white/40 text-lg font-bold uppercase tracking-wider leading-relaxed">
-                    Redesign the original underground railway, the {city.name} transit network.
+                  <p className="text-white/40 text-sm font-bold uppercase tracking-wider leading-tight">
+                    Redesign the original transit network of {city.name}. Difficulty: {(city.difficulty * 10).toFixed(0)}/10.
                   </p>
                 </div>
                 
@@ -405,13 +553,7 @@ const App: React.FC = () => {
            <div className="flex items-center gap-4 cursor-pointer group" onClick={() => { if(currentCity) setView('MODE_SELECT') }}>
               <span className="text-white text-3xl">→</span>
               <div className="bg-[#51A03E] px-4 py-2">
-                <span className="text-white text-5xl font-black uppercase tracking-tight">Play</span>
-              </div>
-            </div>
-            <div className="flex items-center gap-4 cursor-pointer group opacity-40">
-              <span className="text-white text-3xl">↓</span>
-              <div className="bg-[#51A03E] px-4 py-2">
-                <span className="text-white text-5xl font-black uppercase tracking-tight">Mode</span>
+                <span className="text-white text-5xl font-black uppercase tracking-tight">System Start</span>
               </div>
             </div>
         </div>
@@ -503,13 +645,27 @@ const App: React.FC = () => {
           if (!gameState.gameActive) return;
           const rect = canvasRef.current?.getBoundingClientRect(); if (!rect) return;
           const world = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+          
           const hit = gameState.stations.find(s => getDistance(s, world) < 30 / camera.scale);
-          if (hit) { setDragStart(hit); setIsDragging(true); } else { setIsPanning(true); setDragCurrent({ x: e.clientX, y: e.clientY }); }
+          
+          if (gameState.mode === 'CREATIVE' && creativeTool === 'ERASE' && hit) {
+             engineRef.current?.removeStation(hit.id);
+             return;
+          }
+
+          if (gameState.mode === 'CREATIVE' && creativeTool !== 'PAN' && creativeTool !== 'ERASE' && !hit) {
+             engineRef.current?.addManualStation(creativeTool as StationType, world.x, world.y);
+             return;
+          }
+
+          if (hit) { setDragStart(hit); setIsDragging(true); } 
+          else { setIsPanning(true); setDragCurrent({ x: e.clientX, y: e.clientY }); }
         }} 
         onMouseMove={e => {
           const rect = canvasRef.current?.getBoundingClientRect(); if (!rect) return;
           if (isPanning && dragCurrent) { setCamera(prev => ({ ...prev, x: prev.x + (e.clientX - dragCurrent.x), y: prev.y + (e.clientY - dragCurrent.y) })); setDragCurrent({ x: e.clientX, y: e.clientY }); }
           else if (isDragging) setDragCurrent(screenToWorld(e.clientX - rect.left, e.clientY - rect.top));
+          else setDragCurrent(screenToWorld(e.clientX - rect.left, e.clientY - rect.top));
         }} 
         onMouseUp={e => {
           if (isPanning) { setIsPanning(false); setDragCurrent(null); }
@@ -519,16 +675,26 @@ const App: React.FC = () => {
             const hit = gameState.stations.find(s => getDistance(s, worldMouse) < 30 / camera.scale);
             if (hit && hit.id !== dragStart.id) {
               const water = isSegmentCrossingWater(dragStart, hit, currentCity!);
-              if (!water || engineRef.current.state.resources.tunnels > 0) {
+              const canCross = !water || (activeLineIdx % 2 === 0 ? engineRef.current.state.resources.tunnels > 0 : engineRef.current.state.resources.bridges > 0) || gameState.mode === 'CREATIVE';
+              
+              if (canCross) {
                 let line = engineRef.current.state.lines.find(l => l.id === activeLineIdx);
-                if (!line && engineRef.current.state.resources.lines > 0) {
+                if (!line && (engineRef.current.state.resources.lines > 0 || gameState.mode === 'CREATIVE')) {
                   line = { id: activeLineIdx, color: THEME.lineColors[activeLineIdx], stations: [dragStart.id, hit.id], trains: [{ id: Date.now(), lineId: activeLineIdx, nextStationIndex: 1, progress: 0, direction: 1, passengers: [], capacity: GAME_CONFIG.trainCapacity, wagons: 0 }] };
-                  engineRef.current.state.lines.push(line); engineRef.current.state.resources.lines--; if (water) engineRef.current.state.resources.tunnels--;
+                  engineRef.current.state.lines.push(line); 
+                  if (gameState.mode !== 'CREATIVE') engineRef.current.state.resources.lines--; 
+                  if (water && gameState.mode !== 'CREATIVE') {
+                    if (activeLineIdx % 2 === 0) engineRef.current.state.resources.tunnels--;
+                    else engineRef.current.state.resources.bridges--;
+                  }
                   engineRef.current.refreshAllPassengerRoutes();
                 } else if (line) {
                   if (line.stations[0] === dragStart.id) { line.stations.unshift(hit.id); line.trains.forEach(t => t.nextStationIndex++); }
                   else if (line.stations[line.stations.length-1] === dragStart.id) line.stations.push(hit.id);
-                  if (water) engineRef.current.state.resources.tunnels--;
+                  if (water && gameState.mode !== 'CREATIVE') {
+                    if (activeLineIdx % 2 === 0) engineRef.current.state.resources.tunnels--;
+                    else engineRef.current.state.resources.bridges--;
+                  }
                   engineRef.current.refreshAllPassengerRoutes();
                 }
               }
@@ -548,6 +714,12 @@ const App: React.FC = () => {
           const rect = canvasRef.current?.getBoundingClientRect();
           const world = screenToWorld(e.clientX - rect!.left, e.clientY - rect!.top);
           const hitStation = gameState.stations.find(s => getDistance(s, world) < 40 / camera.scale);
+          
+          if (gameState.mode === 'CREATIVE' && hitStation) {
+             engineRef.current.removeStation(hitStation.id);
+             return;
+          }
+
           if (hitStation) {
             const line = gameState.lines.find(l => l.id === activeLineIdx);
             if (line) {
@@ -569,7 +741,12 @@ const App: React.FC = () => {
         onAddWagon={(tId) => engineRef.current?.addWagonToTrain(activeLineIdx, tId)}
         onRemoveWagon={(tId) => engineRef.current?.removeWagonFromTrain(activeLineIdx, tId)}
         onDeleteLine={() => { engineRef.current?.removeLine(activeLineIdx); }}
+        mode={gameState.mode}
       />
+
+      {gameState.mode === 'CREATIVE' && (
+        <CreativeToolbar activeTool={creativeTool} onToolChange={setCreativeTool} />
+      )}
 
       {!gameState.gameActive && (
         <div className="absolute inset-0 z-[200] flex items-center justify-center bg-black/90 backdrop-blur pointer-events-auto">
