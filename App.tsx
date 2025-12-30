@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { GameState, Station, TransitLine, CITIES, City, Point, StationType, GameMode } from './types';
 import { THEME, GAME_CONFIG } from './constants';
 import { project, snapToAngle, getDistance, isSegmentCrossingWater, WORLD_SIZE, distToSegment, getBentPath } from './services/geometry';
 import { GameEngine } from './services/gameEngine';
+import { lerpColor } from './services/utils';
 
 // Components
 import { Stats } from './components/HUD/Stats';
@@ -15,21 +16,10 @@ const DAYS = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'
 
 // Refined Day/Night Cycle Colors
 const DAY_CYCLE_COLORS = {
-  DAY: '#222222',    // Deep Swiss Grey (Standard)
-  NIGHT: '#0F0F0F',  // Obsidian Black
-  SUNRISE: '#22282D', // Dawn Blue
-  SUNSET: '#2D2422',  // Dusk Rust
-};
-
-const lerpColor = (a: string, b: string, t: number) => {
-  const ah = parseInt(a.replace('#', ''), 16),
-        ar = ah >> 16, ag = (ah >> 8) & 0xff, ab = ah & 0xff,
-        bh = parseInt(b.replace('#', ''), 16),
-        br = bh >> 16, bg = (bh >> 8) & 0xff, bb = bh & 0xff,
-        rr = ar + t * (br - ar),
-        rg = ag + t * (bg - ag),
-        rb = ab + t * (bb - ab);
-  return '#' + ((1 << 24) + (Math.round(rr) << 16) + (Math.round(rg) << 8) + Math.round(rb)).toString(16).slice(1);
+  DAY: '#FFFFFF',      // Pure White (Swiss Style)
+  NIGHT: '#1A1A1A',    // Deep Charcoal
+  SUNRISE: '#E0E4E8',  // Cool Grey Dawn
+  SUNSET: '#E8E0D8',   // Warm Dusk
 };
 
 const App: React.FC = () => {
@@ -70,18 +60,26 @@ const App: React.FC = () => {
     y: (sy - camera.y) / camera.scale
   });
 
-  // Calculate background color based on cycle state
-  const getDynamicBackground = useCallback((days: number, auto: boolean, night: boolean) => {
-    if (!auto) {
-      return night ? DAY_CYCLE_COLORS.NIGHT : DAY_CYCLE_COLORS.DAY;
+  // Background color memoized to prevent jitter during UI updates
+  const currentBg = useMemo(() => {
+    const { daysElapsed, dayNightAuto, isNightManual } = gameState;
+    if (!dayNightAuto) {
+      return isNightManual ? DAY_CYCLE_COLORS.NIGHT : DAY_CYCLE_COLORS.DAY;
     }
-    // A "day" in game lasts 120 seconds for smoother transitions
-    const t = (days * 0.5) % 1.0; 
+    const t = (daysElapsed * 0.5) % 1.0; 
     if (t < 0.25) return lerpColor(DAY_CYCLE_COLORS.SUNRISE, DAY_CYCLE_COLORS.DAY, t * 4);
     if (t < 0.5) return lerpColor(DAY_CYCLE_COLORS.DAY, DAY_CYCLE_COLORS.SUNSET, (t - 0.25) * 4);
     if (t < 0.75) return lerpColor(DAY_CYCLE_COLORS.SUNSET, DAY_CYCLE_COLORS.NIGHT, (t - 0.5) * 4);
     return lerpColor(DAY_CYCLE_COLORS.NIGHT, DAY_CYCLE_COLORS.SUNRISE, (t - 0.75) * 4);
-  }, []);
+  }, [gameState.daysElapsed, gameState.dayNightAuto, gameState.isNightManual]);
+
+  // Dynamic text color for high contrast against background
+  const currentText = useMemo(() => {
+    const isDark = currentBg.toLowerCase() === DAY_CYCLE_COLORS.NIGHT.toLowerCase() || 
+                   currentBg.toLowerCase().startsWith('#1') || 
+                   currentBg.toLowerCase().startsWith('#0');
+    return isDark ? '#FFFFFF' : '#1A1A1A';
+  }, [currentBg]);
 
   const initGame = (city: City) => {
     setCurrentCity(city);
@@ -150,10 +148,9 @@ const App: React.FC = () => {
     };
     fId = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(fId);
-  }, [dimensions, camera, isDragging, isPanning, dragStart, dragCurrent, activeLineIdx, currentCity, view, gameState.dayNightAuto, gameState.isNightManual]);
+  }, [dimensions, camera, isDragging, isPanning, dragStart, dragCurrent, activeLineIdx, currentCity, view, currentBg]);
 
-  const drawShape = (ctx: CanvasRenderingContext2D, x: number, y: number, size: number, type: StationType, fill: boolean = true) => {
-    const currentBg = getDynamicBackground(gameState.daysElapsed, gameState.dayNightAuto, gameState.isNightManual);
+  const drawShape = useCallback((ctx: CanvasRenderingContext2D, x: number, y: number, size: number, type: StationType, fill: boolean = true) => {
     ctx.beginPath();
     if (type === 'circle') ctx.arc(x, y, size, 0, Math.PI * 2);
     else if (type === 'square') ctx.rect(x - size, y - size, size * 2, size * 2);
@@ -180,10 +177,10 @@ const App: React.FC = () => {
       ctx.fillStyle = currentBg;
       ctx.fill();
     }
-    ctx.strokeStyle = THEME.text;
+    ctx.strokeStyle = currentText;
     ctx.lineWidth = 3;
     ctx.stroke();
-  };
+  }, [currentBg, currentText]);
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
@@ -193,7 +190,6 @@ const App: React.FC = () => {
     const { stations, lines } = engineRef.current.state;
     const uiScale = Math.pow(1 / camera.scale, 0.85); 
 
-    const currentBg = getDynamicBackground(gameState.daysElapsed, gameState.dayNightAuto, gameState.isNightManual);
     ctx.fillStyle = currentBg;
     ctx.fillRect(0, 0, dimensions.width, dimensions.height);
 
@@ -201,7 +197,7 @@ const App: React.FC = () => {
     ctx.translate(camera.x, camera.y);
     ctx.scale(camera.scale, camera.scale);
 
-    ctx.strokeStyle = lerpColor(currentBg, THEME.text, 0.05);
+    ctx.strokeStyle = lerpColor(currentBg, currentText, 0.08);
     ctx.lineWidth = 1;
     const gridStep = 200;
     const startX = Math.floor((-camera.x / camera.scale) / gridStep) * gridStep;
@@ -216,7 +212,7 @@ const App: React.FC = () => {
       ctx.beginPath(); ctx.moveTo(startX, y); ctx.lineTo(endX, y); ctx.stroke();
     }
 
-    ctx.fillStyle = lerpColor(currentBg, '#1a2b38', 0.5);
+    ctx.fillStyle = lerpColor(currentBg, '#1a2b38', 0.2);
     currentCity.water.forEach(poly => {
       ctx.beginPath();
       poly.forEach((p, i) => { 
@@ -265,7 +261,7 @@ const App: React.FC = () => {
           }
           
           ctx.save(); ctx.translate(tx, ty); ctx.rotate(angle);
-          ctx.fillStyle = THEME.text; 
+          ctx.fillStyle = currentText; 
           ctx.fillRect(-THEME.trainWidth/2, -THEME.trainHeight/2, THEME.trainWidth, THEME.trainHeight);
           
           const enginePassengers = train.passengers.slice(0, GAME_CONFIG.trainCapacity);
@@ -280,7 +276,7 @@ const App: React.FC = () => {
           
           for (let w = 0; w < train.wagons; w++) {
             const offset = -(THEME.trainWidth / 2 + (w + 1) * (THEME.wagonWidth + THEME.wagonGap));
-            ctx.fillStyle = THEME.text;
+            ctx.fillStyle = currentText;
             ctx.fillRect(offset, -THEME.trainHeight / 2, THEME.wagonWidth, THEME.trainHeight);
             
             const startIdx = (w + 1) * GAME_CONFIG.trainCapacity;
@@ -315,7 +311,7 @@ const App: React.FC = () => {
       const size = THEME.stationSize * uiScale;
       drawShape(ctx, s.x, s.y, size, s.type, true);
 
-      ctx.fillStyle = THEME.text; ctx.font = `900 ${18 * uiScale}px Inter`; ctx.textAlign = 'center'; 
+      ctx.fillStyle = currentText; ctx.font = `900 ${18 * uiScale}px Inter`; ctx.textAlign = 'center'; 
       ctx.fillText(s.name.toUpperCase(), s.x, s.y + size + (28 * uiScale));
 
       s.waitingPassengers.forEach((p, i) => {
@@ -326,14 +322,14 @@ const App: React.FC = () => {
         const px = s.x + ox;
         const py = s.y - (size - 8 * uiScale) + (i % cols) * spacing;
         
-        ctx.fillStyle = THEME.text; ctx.strokeStyle = 'transparent';
+        ctx.fillStyle = currentText; ctx.strokeStyle = 'transparent';
         drawShape(ctx, px, py, pS, p.targetType, true);
       });
 
       if (s.timer > 0) { ctx.strokeStyle='#FF4444'; ctx.lineWidth=7*uiScale; ctx.beginPath(); ctx.arc(s.x,s.y,size+14*uiScale, -Math.PI/2, -Math.PI/2+Math.PI*2*s.timer); ctx.stroke(); }
     });
     ctx.restore();
-  }, [dimensions, gameState, camera, currentCity, isDragging, dragStart, dragCurrent, activeLineIdx, view, getDynamicBackground]);
+  }, [dimensions, gameState, camera, currentCity, isDragging, dragStart, dragCurrent, activeLineIdx, view, currentBg, currentText, drawShape]);
 
   const MenuButton = ({ label, icon, onClick }: { label: string, icon?: string, onClick?: () => void }) => (
     <div className="flex items-center gap-4 group cursor-pointer" onClick={onClick}>
@@ -469,17 +465,17 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className="relative w-screen h-screen bg-[#222222] select-none overflow-hidden font-sans">
+    <div className="relative w-screen h-screen select-none overflow-hidden font-sans" style={{ backgroundColor: currentBg }}>
       <div className="absolute top-0 left-0 w-full p-8 flex justify-between items-start z-10 pointer-events-none">
         <div className="flex flex-col gap-4 pointer-events-auto">
           <div>
             <div className="flex items-center gap-3">
-              <h1 className="text-4xl font-black tracking-tighter text-white uppercase">{currentCity?.name}</h1>
-              <div className="bg-white text-black px-3 py-1 rounded-sm text-[10px] font-black uppercase shadow-lg">WEEK {gameState.level}</div>
+              <h1 className="text-4xl font-black tracking-tighter uppercase" style={{ color: currentText }}>{currentCity?.name}</h1>
+              <div className="px-3 py-1 rounded-sm text-[10px] font-black uppercase shadow-lg" style={{ backgroundColor: currentText, color: currentBg }}>WEEK {gameState.level}</div>
             </div>
-            <p className="text-[10px] font-bold text-white/40 uppercase tracking-[0.4em] mt-1">{DAYS[Math.floor(gameState.daysElapsed % 7)]}</p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.4em] mt-1" style={{ color: lerpColor(currentBg, currentText, 0.4) }}>{DAYS[Math.floor(gameState.daysElapsed % 7)]}</p>
           </div>
-          <button onClick={() => setView('CITY_SELECT')} className="text-[10px] font-black text-white/40 hover:text-white uppercase tracking-widest transition-colors flex items-center gap-2">
+          <button onClick={() => setView('CITY_SELECT')} className="text-[10px] font-black uppercase tracking-widest transition-colors flex items-center gap-2" style={{ color: lerpColor(currentBg, currentText, 0.4) }}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
             System Select
           </button>
@@ -490,6 +486,8 @@ const App: React.FC = () => {
           autoSpawn={gameState.autoSpawn}
           dayNightAuto={gameState.dayNightAuto}
           isNightManual={gameState.isNightManual}
+          currentText={currentText}
+          currentBg={currentBg}
           onSpeedChange={(s) => { if(engineRef.current) engineRef.current.state.timeScale = s; setGameState({...gameState, timeScale: s}); }} 
           onToggleAutoSpawn={() => { if(engineRef.current) engineRef.current.state.autoSpawn = !engineRef.current.state.autoSpawn; setGameState({...gameState, autoSpawn: !gameState.autoSpawn}); }}
           onToggleDayNightAuto={() => { if(engineRef.current) engineRef.current.state.dayNightAuto = !engineRef.current.state.dayNightAuto; setGameState({...gameState, dayNightAuto: !gameState.dayNightAuto}); }}
