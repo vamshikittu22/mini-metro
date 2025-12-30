@@ -474,6 +474,9 @@ export class GameEngine {
     this.refreshAllPassengerRoutes();
   }
 
+  /**
+   * Truncates a line from a specific segment based on proximity to head/tail.
+   */
   removeSegment(lineId: number, idxA: number, idxB: number) {
     const line = this.state.lines.find(l => l.id === lineId);
     if (!line) return;
@@ -481,31 +484,61 @@ export class GameEngine {
     const city = CITIES.find(c => c.id === this.state.cityId) || CITIES[0];
     if (idxA < 0 || idxB >= line.stations.length) return;
 
-    const stationsToRemove = line.stations.splice(idxB);
-    const s1 = this.state.stations.find(s => s.id === line.stations[idxA]);
-    const s2 = this.state.stations.find(s => s.id === stationsToRemove[0]);
+    // Determine which end of the line to truncate based on which is closer to the segment
+    const fromHead = idxA < (line.stations.length / 2) - 0.5;
     
-    if (s1 && s2 && isSegmentCrossingWater(s1, s2, city)) {
-      this.state.resources.tunnels++;
+    let stationsToRemove: number[] = [];
+    if (fromHead) {
+      // Remove everything from head (index 0) up to idxA
+      stationsToRemove = line.stations.splice(0, idxA + 1);
+      // Correct train indexes following removal from head
+      line.trains.forEach(train => {
+        train.nextStationIndex = Math.max(0, train.nextStationIndex - stationsToRemove.length);
+        if (train.nextStationIndex < 0) {
+            train.nextStationIndex = 0;
+            train.progress = 0;
+        }
+      });
+    } else {
+      // Remove everything from idxB to the tail end
+      stationsToRemove = line.stations.splice(idxB);
+      // Bound trains to the new tail
+      line.trains.forEach(train => {
+        if (train.nextStationIndex >= idxB) {
+          train.nextStationIndex = line.stations.length - 1;
+          train.progress = 0;
+        }
+      });
     }
 
-    stationsToRemove.forEach((id, i) => {
-       if (i < stationsToRemove.length - 1) {
-         const rs1 = this.state.stations.find(s => s.id === stationsToRemove[i]);
-         const rs2 = this.state.stations.find(s => s.id === stationsToRemove[i+1]);
-         if (rs1 && rs2 && isSegmentCrossingWater(rs1, rs2, city)) this.state.resources.tunnels++;
-       }
-    });
-
-    line.trains.forEach(train => {
-      if (train.nextStationIndex >= idxB) {
-        train.nextStationIndex = idxA;
-        train.progress = 0;
-        train.direction = -1;
+    // Recover tunnels for internal removed segments
+    for (let i = 0; i < stationsToRemove.length - 1; i++) {
+      const s1 = this.state.stations.find(s => s.id === stationsToRemove[i]);
+      const s2 = this.state.stations.find(s => s.id === stationsToRemove[i+1]);
+      if (s1 && s2 && isSegmentCrossingWater(s1, s2, city)) {
+        this.state.resources.tunnels++;
       }
-    });
+    }
+    
+    // Recover tunnel for the severed segment connection itself
+    if (fromHead && line.stations.length > 0) {
+        const sCut1 = this.state.stations.find(s => s.id === stationsToRemove[stationsToRemove.length-1]);
+        const sCut2 = this.state.stations.find(s => s.id === line.stations[0]);
+        if (sCut1 && sCut2 && isSegmentCrossingWater(sCut1, sCut2, city)) {
+            this.state.resources.tunnels++;
+        }
+    } else if (!fromHead && line.stations.length > 0) {
+        const sCut1 = this.state.stations.find(s => s.id === line.stations[line.stations.length-1]);
+        const sCut2 = this.state.stations.find(s => s.id === stationsToRemove[0]);
+        if (sCut1 && sCut2 && isSegmentCrossingWater(sCut1, sCut2, city)) {
+            this.state.resources.tunnels++;
+        }
+    }
 
-    if (line.stations.length < 2) this.removeLine(lineId);
+    // Cleanup line if it no longer has enough stations to form a route
+    if (line.stations.length < 2) {
+        this.removeLine(lineId);
+    }
     this.refreshAllPassengerRoutes();
   }
 }

@@ -301,6 +301,52 @@ const App: React.FC = () => {
     }
   };
 
+  const handleContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    if (!engineRef.current || !gameState.gameActive) return;
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const world = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+    
+    // Find if user clicked on any line segment, checking the bent path segments
+    let closestLineId: number | null = null;
+    let closestSegIdx: number | null = null;
+    let minDistance = 25 / camera.scale;
+
+    gameState.lines.forEach(line => {
+      for (let i = 0; i < line.stations.length - 1; i++) {
+        const s1 = gameState.stations.find(s => s.id === line.stations[i]);
+        const s2 = gameState.stations.find(s => s.id === line.stations[i+1]);
+        if (s1 && s2) {
+          const fullPath = [s1, ...getBentPath(s1, s2)];
+          for (let j = 0; j < fullPath.length - 1; j++) {
+            const d = distToSegment(world, fullPath[j], fullPath[j+1]);
+            if (d < minDistance) {
+              minDistance = d;
+              closestLineId = line.id;
+              closestSegIdx = i;
+            }
+          }
+        }
+      }
+    });
+
+    if (closestLineId !== null && closestSegIdx !== null) {
+      // Correct behavior: remove segment/truncate rather than delete entire line
+      engineRef.current.removeSegment(closestLineId, closestSegIdx, closestSegIdx + 1);
+      setGameState({ ...engineRef.current.state });
+    }
+  };
+
+  const handleRemoveActiveLine = () => {
+    if (!engineRef.current || !gameState.gameActive) return;
+    const line = gameState.lines.find(l => l.id === activeLineIdx);
+    if (line) {
+      engineRef.current.removeLine(activeLineIdx);
+      setGameState({ ...engineRef.current.state });
+    }
+  };
+
   return (
     <div className="relative w-screen h-screen bg-[#F8F4EE] select-none overflow-hidden font-sans">
       {/* AI Intelligence Panel */}
@@ -403,46 +449,55 @@ const App: React.FC = () => {
         <button onClick={requestLocalAdvice} title="Local Contextual Intelligence" className="bg-[#00A8FF] text-white p-3 rounded-full shadow-xl hover:scale-110 transition-all border border-white/20"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg></button>
       </div>
 
-      <canvas ref={canvasRef} width={dimensions.width} height={dimensions.height} onMouseDown={e => {
-        if (!gameState.gameActive) return;
-        const rect = canvasRef.current?.getBoundingClientRect(); if (!rect) return;
-        const world = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
-        const hit = gameState.stations.find(s => getDistance(s, world) < 30 / camera.scale);
-        if (inspectMode) { setSelectedStationId(hit?.id || null); return; }
-        if (hit) { setDragStart(hit); setIsDragging(true); } else { setIsPanning(true); setDragCurrent({ x: e.clientX, y: e.clientY }); }
-      }} onMouseMove={e => {
-        const rect = canvasRef.current?.getBoundingClientRect(); if (!rect) return;
-        if (isPanning && dragCurrent) { setCamera(prev => ({ ...prev, x: prev.x + (e.clientX - dragCurrent.x), y: prev.y + (e.clientY - dragCurrent.y) })); setDragCurrent({ x: e.clientX, y: e.clientY }); }
-        else if (isDragging) setDragCurrent(screenToWorld(e.clientX - rect.left, e.clientY - rect.top));
-      }} onMouseUp={e => {
-        if (isPanning) { setIsPanning(false); setDragCurrent(null); }
-        else if (isDragging && dragStart && engineRef.current) {
+      <canvas 
+        ref={canvasRef} 
+        width={dimensions.width} 
+        height={dimensions.height} 
+        onContextMenu={handleContextMenu}
+        onMouseDown={e => {
+          if (!gameState.gameActive) return;
           const rect = canvasRef.current?.getBoundingClientRect(); if (!rect) return;
-          const hit = gameState.stations.find(s => getDistance(s, screenToWorld(e.clientX - rect.left, e.clientY - rect.top)) < 30 / camera.scale);
-          if (hit && hit.id !== dragStart.id) {
-            const water = isSegmentCrossingWater(dragStart, hit, currentCity);
-            if (!water || engineRef.current.state.resources.tunnels > 0) {
-              let line = engineRef.current.state.lines.find(l => l.id === activeLineIdx);
-              if (!line && engineRef.current.state.resources.lines > 0) {
-                line = { id: activeLineIdx, color: THEME.lineColors[activeLineIdx], stations: [dragStart.id, hit.id], trains: [{ id: Date.now(), lineId: activeLineIdx, nextStationIndex: 1, progress: 0, direction: 1, passengers: [], capacity: GAME_CONFIG.trainCapacity }] };
-                engineRef.current.state.lines.push(line); engineRef.current.state.resources.lines--; if (water) engineRef.current.state.resources.tunnels--;
-                engineRef.current.refreshAllPassengerRoutes();
-              } else if (line) {
-                if (line.stations[0] === dragStart.id) { line.stations.unshift(hit.id); line.trains.forEach(t => t.nextStationIndex++); }
-                else if (line.stations[line.stations.length-1] === dragStart.id) line.stations.push(hit.id);
-                if (water) engineRef.current.state.resources.tunnels--;
-                engineRef.current.refreshAllPassengerRoutes();
+          const world = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+          const hit = gameState.stations.find(s => getDistance(s, world) < 30 / camera.scale);
+          if (inspectMode) { setSelectedStationId(hit?.id || null); return; }
+          if (hit) { setDragStart(hit); setIsDragging(true); } else { setIsPanning(true); setDragCurrent({ x: e.clientX, y: e.clientY }); }
+        }} 
+        onMouseMove={e => {
+          const rect = canvasRef.current?.getBoundingClientRect(); if (!rect) return;
+          if (isPanning && dragCurrent) { setCamera(prev => ({ ...prev, x: prev.x + (e.clientX - dragCurrent.x), y: prev.y + (e.clientY - dragCurrent.y) })); setDragCurrent({ x: e.clientX, y: e.clientY }); }
+          else if (isDragging) setDragCurrent(screenToWorld(e.clientX - rect.left, e.clientY - rect.top));
+        }} 
+        onMouseUp={e => {
+          if (isPanning) { setIsPanning(false); setDragCurrent(null); }
+          else if (isDragging && dragStart && engineRef.current) {
+            const rect = canvasRef.current?.getBoundingClientRect(); if (!rect) return;
+            const hit = gameState.stations.find(s => getDistance(s, screenToWorld(e.clientX - rect.left, e.clientY - rect.top)) < 30 / camera.scale);
+            if (hit && hit.id !== dragStart.id) {
+              const water = isSegmentCrossingWater(dragStart, hit, currentCity);
+              if (!water || engineRef.current.state.resources.tunnels > 0) {
+                let line = engineRef.current.state.lines.find(l => l.id === activeLineIdx);
+                if (!line && engineRef.current.state.resources.lines > 0) {
+                  line = { id: activeLineIdx, color: THEME.lineColors[activeLineIdx], stations: [dragStart.id, hit.id], trains: [{ id: Date.now(), lineId: activeLineIdx, nextStationIndex: 1, progress: 0, direction: 1, passengers: [], capacity: GAME_CONFIG.trainCapacity }] };
+                  engineRef.current.state.lines.push(line); engineRef.current.state.resources.lines--; if (water) engineRef.current.state.resources.tunnels--;
+                  engineRef.current.refreshAllPassengerRoutes();
+                } else if (line) {
+                  if (line.stations[0] === dragStart.id) { line.stations.unshift(hit.id); line.trains.forEach(t => t.nextStationIndex++); }
+                  else if (line.stations[line.stations.length-1] === dragStart.id) line.stations.push(hit.id);
+                  if (water) engineRef.current.state.resources.tunnels--;
+                  engineRef.current.refreshAllPassengerRoutes();
+                }
               }
             }
+            setIsDragging(false); setDragStart(null); setDragCurrent(null);
           }
-          setIsDragging(false); setDragStart(null); setDragCurrent(null);
-        }
-      }} onWheel={e => {
-        const rect = canvasRef.current?.getBoundingClientRect(); if (!rect) return;
-        const mX = e.clientX - rect.left, mY = e.clientY - rect.top, d = -e.deltaY * 0.001, nS = Math.min(2.0, Math.max(0.3, camera.scale + d));
-        const wX = (mX - camera.x) / camera.scale, wY = (mY - camera.y) / camera.scale;
-        setCamera({ x: mX - wX * nS, y: mY - wY * nS, scale: nS });
-      }} />
+        }} 
+        onWheel={e => {
+          const rect = canvasRef.current?.getBoundingClientRect(); if (!rect) return;
+          const mX = e.clientX - rect.left, mY = e.clientY - rect.top, d = -e.deltaY * 0.001, nS = Math.min(2.0, Math.max(0.3, camera.scale + d));
+          const wX = (mX - camera.x) / camera.scale, wY = (mY - camera.y) / camera.scale;
+          setCamera({ x: mX - wX * nS, y: mY - wY * nS, scale: nS });
+        }} 
+      />
       
       <div className="absolute bottom-8 right-8 z-10 bg-white/70 backdrop-blur-xl border border-black/5 p-6 rounded-[2.5rem] shadow-xl min-w-[240px] pointer-events-auto">
         <h3 className="text-[10px] font-black uppercase tracking-[0.4em] text-[#2F3436]/30 mb-5">Resources</h3>
@@ -450,8 +505,29 @@ const App: React.FC = () => {
           <div className="flex flex-col"><span className="text-[9px] text-black/30 font-black uppercase">Lines</span><span className="text-2xl font-black text-[#2F3436]">{gameState.resources.lines}</span></div>
           <div className="flex flex-col"><span className="text-[9px] text-black/30 font-black uppercase">Tunnels</span><span className="text-2xl font-black text-[#2F3436]">{gameState.resources.tunnels}</span></div>
           <div className="flex flex-col"><span className="text-[9px] text-black/30 font-black uppercase">Trains</span><span className="text-2xl font-black text-[#2F3436]">{gameState.resources.trains}</span></div>
+          <div className="flex flex-col">
+            <span className="text-[9px] text-black/30 font-black uppercase">Active Color</span>
+            <div className="w-5 h-5 rounded-full mt-1 border border-black/10" style={{ backgroundColor: THEME.lineColors[activeLineIdx] }} />
+          </div>
         </div>
-        <button onClick={() => engineRef.current?.addTrainToLine(activeLineIdx)} className="w-full mt-6 py-3 rounded-2xl bg-[#2F3436] text-white text-[9px] font-black uppercase tracking-widest disabled:opacity-10 transition-all hover:bg-black">+ Add Train</button>
+        
+        <div className="flex flex-col gap-2 mt-6">
+          <button 
+            onClick={() => engineRef.current?.addTrainToLine(activeLineIdx)} 
+            className="w-full py-3 rounded-2xl bg-[#2F3436] text-white text-[9px] font-black uppercase tracking-widest disabled:opacity-10 transition-all hover:bg-black"
+          >
+            + Add Train
+          </button>
+          
+          {gameState.lines.some(l => l.id === activeLineIdx) && (
+            <button 
+              onClick={handleRemoveActiveLine}
+              className="w-full py-3 rounded-2xl bg-red-500/10 text-red-600 text-[9px] font-black uppercase tracking-widest transition-all hover:bg-red-500 hover:text-white border border-red-500/20"
+            >
+              Delete Active Line
+            </button>
+          )}
+        </div>
       </div>
 
       {!gameState.gameActive && (
