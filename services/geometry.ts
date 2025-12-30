@@ -36,7 +36,7 @@ export function snapToAngle(start: Point, end: Point): Point {
 
 /**
  * Calculates an "elbow" path between two points following 45/90 degree rules.
- * Returns the intermediate point if a bend is needed.
+ * Standard Mini Metro logic: One axis-aligned segment and one 45-degree diagonal segment.
  */
 export function getBentPath(start: Point, end: Point): Point[] {
   const dx = end.x - start.x;
@@ -44,20 +44,20 @@ export function getBentPath(start: Point, end: Point): Point[] {
   const absDx = Math.abs(dx);
   const absDy = Math.abs(dy);
 
-  // If already close to 45 or 90, just return end
-  if (absDx < 1 || absDy < 1 || Math.abs(absDx - absDy) < 1) {
+  // If already axis-aligned or 45 degrees, return end
+  if (absDx < 0.1 || absDy < 0.1 || Math.abs(absDx - absDy) < 0.1) {
     return [end];
   }
 
   let elbow: Point;
+  // If moving more horizontally than vertically, go horizontal then diagonal
   if (absDx > absDy) {
-    // Horizontal then diagonal
     elbow = {
       x: start.x + (dx - Math.sign(dx) * absDy),
       y: start.y
     };
   } else {
-    // Vertical then diagonal
+    // Go vertical then diagonal
     elbow = {
       x: start.x,
       y: start.y + (dy - Math.sign(dy) * absDx)
@@ -90,11 +90,19 @@ export function lineIntersectsLine(a: Point, b: Point, c: Point, d: Point): bool
 }
 
 export function isSegmentCrossingWater(p1: Point, p2: Point, city: City): boolean {
-  for (const poly of city.water) {
-    for (let i = 0; i < poly.length; i++) {
-      const pA = project(poly[i].lat, poly[i].lon, city);
-      const pB = project(poly[(i + 1) % poly.length].lat, poly[(i + 1) % poly.length].lon, city);
-      if (lineIntersectsLine(p1, p2, pA, pB)) return true;
+  // Use bent path for more accurate water crossing detection
+  const path = [p1, ...getBentPath(p1, p2)];
+  
+  for (let j = 0; j < path.length - 1; j++) {
+    const start = path[j];
+    const end = path[j+1];
+    
+    for (const poly of city.water) {
+      for (let i = 0; i < poly.length; i++) {
+        const pA = project(poly[i].lat, poly[i].lon, city);
+        const pB = project(poly[(i + 1) % poly.length].lat, poly[(i + 1) % poly.length].lon, city);
+        if (lineIntersectsLine(start, end, pA, pB)) return true;
+      }
     }
   }
   return false;

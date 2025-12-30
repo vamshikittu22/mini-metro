@@ -32,6 +32,9 @@ const App: React.FC = () => {
   const [dragCurrent, setDragCurrent] = useState<Point | null>(null);
   const [activeLineIdx, setActiveLineIdx] = useState(0);
 
+  const [inspectMode, setInspectMode] = useState(false);
+  const [selectedStationId, setSelectedStationId] = useState<number | null>(null);
+
   const screenToWorld = (sx: number, sy: number) => ({
     x: (sx - camera.x) / camera.scale,
     y: (sy - camera.y) / camera.scale
@@ -40,9 +43,11 @@ const App: React.FC = () => {
   const [showAI, setShowAI] = useState(false);
   const [aiResponse, setAiResponse] = useState("");
   const [isThinking, setIsThinking] = useState(false);
+  const [aiMode, setAiMode] = useState<'strategy' | 'local'>('strategy');
 
-  const requestStrategy = async () => {
+  const requestDeepStrategy = async () => {
     if (!engineRef.current) return;
+    setAiMode('strategy');
     try {
       if (typeof (window as any).aistudio !== 'undefined') {
         const hasKey = await (window as any).aistudio.hasSelectedApiKey();
@@ -50,21 +55,53 @@ const App: React.FC = () => {
       }
       setIsThinking(true);
       setShowAI(true);
-      setAiResponse("Analyzing current topology...");
+      setAiResponse("Performing deep topological analysis...");
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      
       const currentMap = {
         city: currentCity.name,
         stations: engineRef.current.state.stations.map(s => ({ name: s.name, type: s.type, passengers: s.waitingPassengers.length })),
-        lines: engineRef.current.state.lines.map(l => ({ color: l.color, stationCount: l.stations.length, trains: l.trains.length }))
+        lines: engineRef.current.state.lines.map(l => ({ color: l.color, stationCount: l.stations.length, trains: l.trains.length })),
+        score: engineRef.current.state.score,
+        resources: engineRef.current.state.resources
       };
+
       const response = await ai.models.generateContent({
         model: 'gemini-3-pro-preview',
-        contents: `Provide 1-2 sentences of strategic advice for this transit map: ${JSON.stringify(currentMap)}`,
+        contents: `Act as a world-class transit system architect. Analyze this Mini Metro game state and provide a highly detailed, strategic 2-sentence optimization plan. Be technical about bottleneck management and line topology: ${JSON.stringify(currentMap)}`,
         config: { thinkingConfig: { thinkingBudget: 32768 } }
       });
-      setAiResponse(response.text || "Optimize your loops to reduce overcrowding.");
+      setAiResponse(response.text || "Ensure your central transfer hubs have at least 3 distinct line connections to distribute load.");
     } catch (err) {
-      setAiResponse("Signal weak. Keep expanding.");
+      setAiResponse("Strategy link interrupted. Focus on loop efficiency.");
+    } finally {
+      setIsThinking(false);
+    }
+  };
+
+  const requestLocalAdvice = async () => {
+    if (!engineRef.current) return;
+    setAiMode('local');
+    try {
+      if (typeof (window as any).aistudio !== 'undefined') {
+        const hasKey = await (window as any).aistudio.hasSelectedApiKey();
+        if (!hasKey) await (window as any).aistudio.openSelectKey();
+      }
+      setIsThinking(true);
+      setShowAI(true);
+      setAiResponse("Consulting municipal records...");
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: `Based on real-world geographical data for ${currentCity.name}, what are the major transit challenges or historical bottleneck areas commuters face in this city? Provide a helpful 2-sentence tip for a transit planner.`,
+        config: { 
+          tools: [{ googleMaps: {} }] 
+        }
+      });
+      setAiResponse(response.text || "The central districts are prone to heavy congestion; prioritize relief lines bypassing the historic core.");
+    } catch (err) {
+      setAiResponse("Local records unavailable. Watch the river crossings.");
     } finally {
       setIsThinking(false);
     }
@@ -111,6 +148,8 @@ const App: React.FC = () => {
       y: window.innerHeight / 2 - avgY * initialScale,
       scale: initialScale
     });
+
+    setSelectedStationId(null);
   };
 
   useEffect(() => {
@@ -156,7 +195,7 @@ const App: React.FC = () => {
     };
     frameId = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(frameId);
-  }, [dimensions, camera, isDragging, isPanning, dragStart, dragCurrent, activeLineIdx, currentCity]);
+  }, [dimensions, camera, isDragging, isPanning, dragStart, dragCurrent, activeLineIdx, currentCity, inspectMode, selectedStationId]);
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
@@ -167,7 +206,6 @@ const App: React.FC = () => {
     const { width, height } = dimensions;
     const { stations, lines } = engineRef.current.state;
 
-    // More aggressive scaling for zoom out
     const uiScaleFactor = Math.pow(1 / camera.scale, 0.65); 
     const scaledStationSize = THEME.stationSize * uiScaleFactor;
 
@@ -178,6 +216,7 @@ const App: React.FC = () => {
     ctx.translate(camera.x, camera.y);
     ctx.scale(camera.scale, camera.scale);
 
+    // Water
     ctx.fillStyle = '#E3E9F0';
     currentCity.water.forEach(poly => {
       ctx.beginPath();
@@ -188,6 +227,7 @@ const App: React.FC = () => {
       ctx.closePath(); ctx.fill();
     });
 
+    // Lines with Snapping
     lines.forEach(line => {
       if (line.stations.length < 2) return;
       line.stations.forEach((sid, idx) => {
@@ -195,26 +235,32 @@ const App: React.FC = () => {
         const sPrev = stations.find(st => st.id === line.stations[idx - 1]);
         const sCurr = stations.find(st => st.id === sid);
         if (sPrev && sCurr) {
+          const path = getBentPath(sPrev, sCurr);
           ctx.beginPath();
           ctx.strokeStyle = line.color;
           ctx.lineWidth = THEME.lineWidth;
           ctx.lineCap = 'round';
           ctx.lineJoin = 'round';
           ctx.moveTo(sPrev.x, sPrev.y);
-          ctx.lineTo(sCurr.x, sCurr.y);
+          path.forEach(p => ctx.lineTo(p.x, p.y));
           ctx.stroke();
 
+          // Tunnels
           if (isSegmentCrossingWater(sPrev, sCurr, currentCity)) {
             ctx.save();
             ctx.strokeStyle = '#FFFFFF';
             ctx.lineWidth = THEME.lineWidth / 3;
             ctx.setLineDash([8, 12]);
-            ctx.beginPath(); ctx.moveTo(sPrev.x, sPrev.y); ctx.lineTo(sCurr.x, sCurr.y); ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(sPrev.x, sPrev.y);
+            path.forEach(p => ctx.lineTo(p.x, p.y));
+            ctx.stroke();
             ctx.restore();
           }
         }
       });
 
+      // Trains on Snapped Paths
       line.trains.forEach(train => {
         const safeIdx = Math.max(0, Math.min(train.nextStationIndex, line.stations.length - 1));
         const fromIdx = train.direction === 1 ? safeIdx - 1 : safeIdx + 1;
@@ -223,11 +269,29 @@ const App: React.FC = () => {
         const toS = stations.find(s => s.id === line.stations[safeIdx]);
 
         if (fromS && toS) {
-          const tx = fromS.x + (toS.x - fromS.x) * train.progress;
-          const ty = fromS.y + (toS.y - fromS.y) * train.progress;
+          const pathPoints = [fromS, ...getBentPath(fromS, toS)];
+          const totalLength = pathPoints.reduce((acc, p, i) => i === 0 ? 0 : acc + getDistance(pathPoints[i-1], p), 0);
+          let targetDist = train.progress * totalLength;
+          let currentDist = 0;
+          let tx = fromS.x, ty = fromS.y, angle = 0;
+
+          for (let i = 1; i < pathPoints.length; i++) {
+            const p1 = pathPoints[i-1];
+            const p2 = pathPoints[i];
+            const segLen = getDistance(p1, p2);
+            if (currentDist + segLen >= targetDist) {
+              const segProgress = (targetDist - currentDist) / segLen;
+              tx = p1.x + (p2.x - p1.x) * segProgress;
+              ty = p1.y + (p2.y - p1.y) * segProgress;
+              angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
+              break;
+            }
+            currentDist += segLen;
+          }
+
           ctx.save();
           ctx.translate(tx, ty);
-          ctx.rotate(Math.atan2(toS.y - fromS.y, toS.x - fromS.x));
+          ctx.rotate(angle);
           ctx.fillStyle = THEME.text;
           ctx.fillRect(-THEME.trainWidth / 2, -THEME.trainHeight / 2, THEME.trainWidth, THEME.trainHeight);
           ctx.fillStyle = '#FFF';
@@ -241,23 +305,27 @@ const App: React.FC = () => {
       });
     });
 
+    // Ghost Line Snapping
     if (isDragging && dragStart && dragCurrent) {
-      const snapped = snapToAngle(dragStart, dragCurrent);
       ctx.strokeStyle = THEME.lineColors[activeLineIdx];
       ctx.lineWidth = THEME.lineWidth;
       ctx.beginPath(); ctx.setLineDash([10, 5]);
-      const path = getBentPath(dragStart, snapped);
+      
+      const path = getBentPath(dragStart, dragCurrent);
       ctx.moveTo(dragStart.x, dragStart.y);
       path.forEach(p => ctx.lineTo(p.x, p.y));
       ctx.stroke(); ctx.setLineDash([]);
     }
 
+    // Stations
     stations.forEach(s => {
       const activeLines = lines.filter(l => l.stations.includes(s.id));
       const isTransfer = activeLines.length > 1;
-      ctx.strokeStyle = THEME.stationStroke;
+      const isSelected = selectedStationId === s.id;
+
+      ctx.strokeStyle = isSelected ? '#00A8FF' : THEME.stationStroke;
       ctx.fillStyle = THEME.stationFill;
-      ctx.lineWidth = 2.5 * uiScaleFactor;
+      ctx.lineWidth = (isSelected ? 4 : 2.5) * uiScaleFactor;
       
       if (isTransfer) {
         ctx.beginPath();
@@ -306,7 +374,7 @@ const App: React.FC = () => {
     });
 
     ctx.restore();
-  }, [dimensions, gameState, isDragging, isPanning, dragStart, dragCurrent, activeLineIdx, currentCity, camera]);
+  }, [dimensions, gameState, isDragging, isPanning, dragStart, dragCurrent, activeLineIdx, currentCity, camera, selectedStationId]);
 
   const handleMouseDown = (e: React.MouseEvent) => {
     if (!gameState.gameActive) return;
@@ -314,7 +382,18 @@ const App: React.FC = () => {
     if (!rect) return;
     const worldPos = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
     if (e.button === 2) return;
+
     const hitStation = gameState.stations.find(s => getDistance(s, worldPos) < 30 / camera.scale);
+
+    if (inspectMode) {
+      if (hitStation) {
+        setSelectedStationId(hitStation.id === selectedStationId ? null : hitStation.id);
+      } else {
+        setSelectedStationId(null);
+      }
+      return;
+    }
+
     if (hitStation) { setDragStart(hitStation); setIsDragging(true); } 
     else { setIsPanning(true); setDragCurrent({ x: e.clientX, y: e.clientY }); }
   };
@@ -377,7 +456,7 @@ const App: React.FC = () => {
         if (atStart || atEnd) {
           if (atStart) {
             line.stations.unshift(hitStation.id);
-            line.trains.forEach(t => { t.nextStationIndex++; }); // Prevent teleporting
+            line.trains.forEach(t => { t.nextStationIndex++; });
           } else {
             line.stations.push(hitStation.id);
           }
@@ -387,6 +466,8 @@ const App: React.FC = () => {
     }
     setIsDragging(false); setDragStart(null); setDragCurrent(null);
   };
+
+  const selectedStation = selectedStationId ? gameState.stations.find(s => s.id === selectedStationId) : null;
 
   return (
     <div className="relative w-screen h-screen bg-[#F8F4EE] select-none overflow-hidden font-sans">
@@ -403,6 +484,12 @@ const App: React.FC = () => {
               </button>
             ))}
           </div>
+          <button 
+            onClick={() => { setInspectMode(!inspectMode); setSelectedStationId(null); }}
+            className={`mt-2 px-6 py-2 rounded-full text-[10px] font-black uppercase tracking-widest transition-all self-start shadow-sm pointer-events-auto ${inspectMode ? 'bg-blue-500 text-white' : 'bg-white/60 text-[#2F3436]/40 border border-black/5 hover:text-[#2F3436]'}`}
+          >
+            {inspectMode ? 'Inspection: ON' : 'Inspection: OFF'}
+          </button>
         </div>
         
         <div className="flex gap-8 items-center pointer-events-auto">
@@ -426,18 +513,53 @@ const App: React.FC = () => {
         </div>
       </div>
 
-      <button onClick={requestStrategy} className="absolute top-32 left-8 z-20 bg-[#2F3436] text-white p-3 rounded-full shadow-xl hover:scale-110 active:scale-95 transition-all">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 2a10 10 0 1 0 10 10 4 4 0 0 1-5-3.5A4 4 0 0 1 12 5z"/><circle cx="12" cy="12" r="3"/></svg>
-      </button>
+      <div className="absolute top-48 right-8 z-20 flex flex-col gap-3 pointer-events-auto">
+        <button onClick={requestDeepStrategy} className="bg-[#2F3436] text-white p-3 rounded-full shadow-xl hover:scale-110 active:scale-95 transition-all flex items-center justify-center">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 2a10 10 0 1 0 10 10 4 4 0 0 1-5-3.5A4 4 0 0 1 12 5z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+        <button onClick={requestLocalAdvice} className="bg-[#00A8FF] text-white p-3 rounded-full shadow-xl hover:scale-110 active:scale-95 transition-all flex items-center justify-center">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+        </button>
+      </div>
 
       {showAI && (
-        <div className="absolute left-8 top-48 w-72 z-30 animate-in slide-in-from-left-4 duration-300">
-          <div className="bg-white/95 backdrop-blur-xl shadow-2xl p-6 rounded-[2rem] border border-black/5 relative">
+        <div className={`absolute right-20 top-48 w-72 z-30 animate-in slide-in-from-right-4 duration-300`}>
+          <div className={`bg-white/95 backdrop-blur-xl shadow-2xl p-6 rounded-[2rem] border relative ${aiMode === 'local' ? 'border-blue-100' : 'border-black/5'}`}>
              <button onClick={() => setShowAI(false)} className="absolute top-4 right-4 text-black/10 hover:text-black">×</button>
-             <h4 className="text-[9px] font-black uppercase tracking-[0.3em] text-black/30 mb-3 flex items-center gap-2">
-               <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"/>Strategic Insight
+             <h4 className={`text-[9px] font-black uppercase tracking-[0.3em] mb-3 flex items-center gap-2 ${aiMode === 'local' ? 'text-blue-500' : 'text-black/30'}`}>
+               <span className={`w-1.5 h-1.5 rounded-full animate-pulse ${aiMode === 'local' ? 'bg-blue-500' : 'bg-green-500'}`}/>
+               {aiMode === 'local' ? 'Local Advisor' : 'Strategic Analyst'}
              </h4>
              <p className={`text-sm leading-relaxed text-[#2F3436] font-medium ${isThinking ? 'animate-pulse' : ''}`}>{aiResponse}</p>
+          </div>
+        </div>
+      )}
+
+      {inspectMode && selectedStation && (
+        <div className="absolute left-1/2 bottom-32 -translate-x-1/2 w-80 z-30 animate-in fade-in slide-in-from-bottom-4 duration-300">
+          <div className="bg-white/95 backdrop-blur-xl shadow-2xl p-6 rounded-[2.5rem] border border-black/5 text-center">
+            <h3 className="text-xl font-black text-[#2F3436] mb-1">{selectedStation.name}</h3>
+            <p className="text-[9px] font-black uppercase tracking-[0.2em] text-[#2F3436]/30 mb-4">{selectedStation.type} hub</p>
+            
+            <div className="flex flex-wrap justify-center gap-3 mb-4">
+              {(() => {
+                const counts: Record<string, number> = {};
+                selectedStation.waitingPassengers.forEach(p => counts[p.targetType] = (counts[p.targetType] || 0) + 1);
+                return Object.entries(counts).map(([type, count]) => (
+                  <div key={type} className="flex flex-col items-center gap-1 bg-black/5 p-2 rounded-2xl min-w-[50px]">
+                    <span className="text-lg font-black text-[#2F3436]">{count}</span>
+                    <span className="text-[8px] font-black uppercase tracking-widest opacity-30">{type}</span>
+                  </div>
+                ));
+              })()}
+              {selectedStation.waitingPassengers.length === 0 && (
+                <p className="text-xs text-[#2F3436]/40 font-medium italic">Station clear of passengers</p>
+              )}
+            </div>
+            
+            <p className="text-[10px] text-[#2F3436]/60 font-bold uppercase tracking-widest">
+              Total Waiting: {selectedStation.waitingPassengers.length}
+            </p>
           </div>
         </div>
       )}

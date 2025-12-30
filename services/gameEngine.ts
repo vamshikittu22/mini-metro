@@ -174,6 +174,9 @@ export class GameEngine {
     if (!this.state.gameActive) return;
     const city = CITIES.find(c => c.id === this.state.cityId) || CITIES[0];
     
+    // Feature request: only create station types that are present in the current city's initial stations
+    const initialTypes = Array.from(new Set(city.initialStations.map(s => s.type)));
+
     for (let attempt = 0; attempt < 30; attempt++) {
       const spawnScale = 0.45 + (this.state.daysElapsed * 0.05);
       const range = Math.min(0.85, spawnScale);
@@ -200,12 +203,12 @@ export class GameEngine {
       }
       if (isTooCloseToLine) continue;
 
-      const types: StationType[] = ['circle', 'square', 'triangle', 'pentagon', 'star'];
       const names = ['Canary Wharf', 'Paddington', 'Euston', 'Stratford', 'Bond St', 'Angel', 'Oxford Circus', 'Leicester Sq', 'Bloomsbury', 'Chelsea'];
       
       this.state.stations.push({
         id: this.stationIdCounter++,
-        type: types[Math.floor(Math.random() * (this.state.stations.length > 5 ? 5 : 3))],
+        // Restricted to initial types
+        type: initialTypes[Math.floor(Math.random() * initialTypes.length)],
         name: `${names[Math.floor(Math.random()*names.length)]}`,
         x: pos.x,
         y: pos.y,
