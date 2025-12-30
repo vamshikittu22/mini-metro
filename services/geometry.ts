@@ -1,4 +1,3 @@
-
 import { Point, City } from '../types';
 
 /**
@@ -24,6 +23,7 @@ export function snapToAngle(start: Point, end: Point): Point {
   const dy = end.y - start.y;
   
   const angle = Math.atan2(dy, dx);
+  // Snap to increments of 45 degrees (PI/4)
   const snapAngle = Math.round(angle / (Math.PI / 4)) * (Math.PI / 4);
   
   const dist = Math.sqrt(dx * dx + dy * dy);
@@ -36,7 +36,6 @@ export function snapToAngle(start: Point, end: Point): Point {
 
 /**
  * Calculates an "elbow" path between two points following 45/90 degree rules.
- * Standard Mini Metro logic: One axis-aligned segment and one 45-degree diagonal segment.
  */
 export function getBentPath(start: Point, end: Point): Point[] {
   const dx = end.x - start.x;
@@ -50,17 +49,16 @@ export function getBentPath(start: Point, end: Point): Point[] {
   }
 
   let elbow: Point;
-  // If moving more horizontally than vertically, go horizontal then diagonal
+  // Create a 45-degree diagonal followed by an axis-aligned segment
   if (absDx > absDy) {
     elbow = {
-      x: start.x + (dx - Math.sign(dx) * absDy),
+      x: start.x + Math.sign(dx) * (absDx - absDy),
       y: start.y
     };
   } else {
-    // Go vertical then diagonal
     elbow = {
       x: start.x,
-      y: start.y + (dy - Math.sign(dy) * absDx)
+      y: start.y + Math.sign(dy) * (absDy - absDx)
     };
   }
   return [elbow, end];
@@ -90,7 +88,6 @@ export function lineIntersectsLine(a: Point, b: Point, c: Point, d: Point): bool
 }
 
 export function isSegmentCrossingWater(p1: Point, p2: Point, city: City): boolean {
-  // Use bent path for more accurate water crossing detection
   const path = [p1, ...getBentPath(p1, p2)];
   
   for (let j = 0; j < path.length - 1; j++) {
