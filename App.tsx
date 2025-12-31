@@ -427,6 +427,7 @@ const App: React.FC = () => {
               const pX = offset + 12 + col * 18;
               const pY = -THEME.trainHeight/2 + 10 + row * 18;
               ctx.fillStyle = currentBg; ctx.strokeStyle = 'transparent';
+              // Fix typo pY on next line (line 430)
               drawShape(ctx, pX, pY, 5, p.targetType, true);
             });
           }
@@ -608,7 +609,7 @@ const App: React.FC = () => {
 
   return (
     <div className="relative w-screen h-screen select-none overflow-hidden font-sans" style={{ backgroundColor: currentBg }}>
-      <div className="absolute top-0 left-0 w-full p-8 flex justify-between items-start z-10 pointer-events-none">
+      <div className="absolute top-0 left-0 w-full p-8 flex justify-between items-start z-10 pointer-events-auto">
         <div className="flex flex-col gap-4 pointer-events-auto">
           <div>
             <div className="flex items-center gap-3">
@@ -724,8 +725,9 @@ const App: React.FC = () => {
             const line = gameState.lines.find(l => l.id === activeLineIdx);
             if (line) {
               const idx = line.stations.indexOf(hitStation.id);
-              if (idx === 0) engineRef.current.removeSegment(line.id, 0, 0);
-              else if (idx === line.stations.length - 1) engineRef.current.removeSegment(line.id, idx - 1, idx);
+              // CRITICAL: Ensure we pass correct segment neighbors for reclamation
+              if (idx === 0 && line.stations.length > 1) engineRef.current.removeSegment(line.id, 0, 1);
+              else if (idx === line.stations.length - 1 && line.stations.length > 1) engineRef.current.removeSegment(line.id, idx - 1, idx);
             }
           }
         }}

@@ -249,7 +249,6 @@ export class GameEngine {
     }
   }
 
-  // Fix: Line 256 error. Corrected 't.type' to 's.type' in the map function to fix 'Cannot find name t'.
   spawnPassenger() {
     if (!this.state.gameActive || !this.state.autoSpawn || this.state.stations.length < 2) return;
     const startStation = this.state.stations[Math.floor(Math.random() * this.state.stations.length)];
@@ -310,20 +309,44 @@ export class GameEngine {
     });
   }
 
+  /**
+   * Helper to reclaim tunnel/bridge resources for a specific segment
+   */
+  reclaimSegment(lineId: number, s1Id: number, s2Id: number) {
+    if (this.state.mode === 'CREATIVE') return;
+    const s1 = this.state.stations.find(s => s.id === s1Id);
+    const s2 = this.state.stations.find(s => s.id === s2Id);
+    const city = CITIES.find(c => c.id === this.state.cityId) || CITIES[0];
+    
+    if (s1 && s2 && isSegmentCrossingWater(s1, s2, city)) {
+      if (lineId % 2 === 0) {
+        this.state.resources.tunnels++;
+      } else {
+        this.state.resources.bridges++;
+      }
+    }
+  }
+
   removeStation(id: number) {
     const sIdx = this.state.stations.findIndex(s => s.id === id);
     if (sIdx === -1) return;
 
     // Cleanup lines that include this station
-    const linesToCleanup = this.state.lines.filter(l => l.stations.includes(id));
-    linesToCleanup.forEach(line => {
+    // CRITICAL: Reclaim segments connected to this station BEFORE splicing the array
+    this.state.lines.forEach(line => {
       const sPos = line.stations.indexOf(id);
       if (sPos !== -1) {
-        // Simple logic: if station is in middle, remove line or break?
-        // Mini Metro behavior: remove station from line and reconnect ends
+        // Reclaim segments to neighbors
+        if (sPos > 0) {
+          this.reclaimSegment(line.id, line.stations[sPos - 1], line.stations[sPos]);
+        }
+        if (sPos < line.stations.length - 1) {
+          this.reclaimSegment(line.id, line.stations[sPos], line.stations[sPos + 1]);
+        }
+
         line.stations.splice(sPos, 1);
         if (line.stations.length < 2) {
-          this.removeLine(line.id);
+          this.removeLine(line.id, false); // false because we just reclaimed tunnels for this station's segment
         }
       }
     });
@@ -386,20 +409,16 @@ export class GameEngine {
     }
   }
 
-  removeLine(lineId: number) {
+  removeLine(lineId: number, reclaimSegments = true) {
     const lineIdx = this.state.lines.findIndex(l => l.id === lineId);
     if (lineIdx !== -1) {
       const line = this.state.lines[lineIdx];
-      const city = CITIES.find(c => c.id === this.state.cityId) || CITIES[0];
       
-      // Reclaim tunnels/bridges if not in creative
       if (this.state.mode !== 'CREATIVE') {
-        for (let i = 0; i < line.stations.length - 1; i++) {
-          const s1 = this.state.stations.find(s => s.id === line.stations[i]);
-          const s2 = this.state.stations.find(s => s.id === line.stations[i+1]);
-          if (s1 && s2 && isSegmentCrossingWater(s1, s2, city)) {
-            if (line.id % 2 === 0) this.state.resources.tunnels++;
-            else this.state.resources.bridges++;
+        if (reclaimSegments) {
+          // Return all used tunnels/bridges for this line
+          for (let i = 0; i < line.stations.length - 1; i++) {
+            this.reclaimSegment(line.id, line.stations[i], line.stations[i + 1]);
           }
         }
         this.state.resources.lines++;
@@ -418,17 +437,14 @@ export class GameEngine {
     const line = this.state.lines.find(l => l.id === lineId);
     if (!line) return;
     
-    const city = CITIES.find(c => c.id === this.state.cityId) || CITIES[0];
-    const s1 = this.state.stations.find(s => s.id === line.stations[idxA]);
-    const s2 = this.state.stations.find(s => s.id === line.stations[idxB]);
-    
-    if (s1 && s2 && isSegmentCrossingWater(s1, s2, city) && this.state.mode !== 'CREATIVE') {
-      if (line.id % 2 === 0) this.state.resources.tunnels++;
-      else this.state.resources.bridges++;
-    }
+    // Check if the segment we're about to remove crosses water
+    this.reclaimSegment(lineId, line.stations[idxA], line.stations[idxB]);
 
     line.stations.splice(idxB, 1);
-    if (line.stations.length < 2) this.removeLine(lineId);
-    else this.refreshAllPassengerRoutes();
+    if (line.stations.length < 2) {
+      this.removeLine(lineId, false); // false to avoid double-reclaiming the segment we just did
+    } else {
+      this.refreshAllPassengerRoutes();
+    }
   }
 }
