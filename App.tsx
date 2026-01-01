@@ -3,6 +3,7 @@ import { GameState, Station, TransitLine, CITIES, City, Point, StationType, Game
 import { THEME, GAME_CONFIG } from './constants';
 import { project, getDistance, isSegmentCrossingWater, getBentPath } from './services/geometry';
 import { GameEngine } from './services/gameEngine';
+import { SystemValidator } from './services/validation';
 
 // Components
 import { Stats } from './components/HUD/Stats';
@@ -114,6 +115,7 @@ const App: React.FC = () => {
     const loop = (t: number) => {
       if (engineRef.current) { 
         engineRef.current.update(t); 
+        // Single source of truth update
         setGameState({ ...engineRef.current.state }); 
         draw(); 
       }
@@ -194,7 +196,7 @@ const App: React.FC = () => {
           
           ctx.strokeStyle = line.color;
           ctx.lineWidth = THEME.lineWidth;
-          ctx.setLineDash([5, 5]); // Dashed tunnel effect
+          ctx.setLineDash([5, 5]); 
           ctx.beginPath();
           ctx.moveTo(path[0].x, path[0].y);
           for (let j = 1; j < path.length; j++) ctx.lineTo(path[j].x, path[j].y);
@@ -216,14 +218,12 @@ const App: React.FC = () => {
           const sA = stations.find(s => s.id === line.stations[i-1]);
           const sB = stations.find(s => s.id === line.stations[i]);
           if (sA && sB) {
-            // Only draw non-water segments normally (water segments handled above or drawn over)
             getBentPath(sA, sB).forEach(pt => ctx.lineTo(pt.x, pt.y));
           }
         }
         ctx.stroke();
       }
 
-      // Render Trains
       line.trains.forEach(train => {
         const sIdx = Math.max(0, Math.min(train.nextStationIndex, line.stations.length - 1));
         const fIdx = Math.max(0, Math.min(train.direction === 1 ? sIdx - 1 : sIdx + 1, line.stations.length - 1));
@@ -239,11 +239,9 @@ const App: React.FC = () => {
             curD += segL;
           }
           ctx.save(); ctx.translate(tx, ty); ctx.rotate(angle);
-          // Train body
           ctx.fillStyle = THEME.text; 
           ctx.fillRect(-THEME.trainWidth/2, -THEME.trainHeight/2, THEME.trainWidth, THEME.trainHeight);
           
-          // Passenger symbols inside train
           const pSize = THEME.passengerSize * 0.8;
           train.passengers.forEach((p, i) => {
             const row = Math.floor(i / 3);
@@ -257,7 +255,6 @@ const App: React.FC = () => {
       });
     });
 
-    // Drag Preview
     if (isDragging && dragStart && dragCurrent) {
       ctx.strokeStyle = THEME.lineColors[activeLineIdx]; ctx.lineWidth = THEME.lineWidth; ctx.setLineDash([15, 10]);
       ctx.beginPath(); ctx.moveTo(dragStart.x, dragStart.y);
@@ -265,7 +262,6 @@ const App: React.FC = () => {
       ctx.stroke(); ctx.setLineDash([]);
     }
 
-    // Stations & Passengers
     stations.forEach(s => {
       drawShape(ctx, s.x, s.y, THEME.stationSize, s.type);
       ctx.fillStyle = THEME.text; ctx.font = '900 12px Inter'; ctx.textAlign = 'center';
@@ -278,7 +274,6 @@ const App: React.FC = () => {
         drawShape(ctx, px, py, pSize / 2, p.targetType, true, 1.5);
       });
 
-      // Failure timer
       if (s.timer > 0) {
         ctx.beginPath();
         ctx.strokeStyle = '#EB2827';
@@ -413,7 +408,11 @@ const App: React.FC = () => {
 
       {showAudit && (
         <div className="fixed bottom-32 left-8 z-[100] bg-white p-8 border-2 border-black/5 shadow-2xl min-w-[300px]">
-           <h4 className="text-xs font-black uppercase mb-4">System Audit</h4>
+           <h4 className="text-xs font-black uppercase mb-4">System Audit & Integrity</h4>
+           <div className="mb-4 p-2 bg-black/5 text-[8px] font-mono leading-tight">
+             SYSTEM STATUS: {SystemValidator.validateSystemState(gameState, currentCity!) ? 'OPTIMAL' : 'CORRECTED'} <br/>
+             VERIFICATION CYCLE: 5.0s
+           </div>
            {Object.entries(gameState.totalResources).map(([k, v]) => (
              <div key={k} className="flex justify-between py-1 text-[10px] font-bold uppercase">
                <span className="opacity-40">{k}</span>

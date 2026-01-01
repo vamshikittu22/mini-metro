@@ -4,12 +4,15 @@ import {
 import { GAME_CONFIG, THEME } from '../constants';
 import { getDistance, isSegmentCrossingWater, project } from './geometry';
 import { InventoryManager } from './inventoryManager';
+import { SystemValidator } from './validation';
 
 export class GameEngine {
   state: GameState;
   lastUpdate: number = 0;
   passengerIdCounter: number = 0;
   stationIdCounter: number = 1000;
+  lastAuditTime: number = 0;
+  simulationHistory: any[] = [];
   
   constructor(initialState: GameState) {
     this.state = initialState;
@@ -20,6 +23,7 @@ export class GameEngine {
     if (!this.state.gameActive || this.state.isPausedForReward) return;
     if (this.lastUpdate === 0) {
       this.lastUpdate = currentTime;
+      this.lastAuditTime = currentTime;
       return;
     }
     const rawDt = currentTime - this.lastUpdate;
@@ -30,6 +34,18 @@ export class GameEngine {
     this.updateTrains(dt);
     this.updateStations(dt);
     this.checkFailure();
+
+    // 5-Second Logic Audit Hook
+    if (currentTime - this.lastAuditTime > 5000) {
+      this.runAudit();
+      this.lastAuditTime = currentTime;
+    }
+  }
+
+  runAudit() {
+    const city = CITIES.find(c => c.id === this.state.cityId) || CITIES[0];
+    SystemValidator.validateSystemState(this.state, city);
+    SystemValidator.runPathfindingStressTest(this.state, this);
   }
 
   updateTime(dt: number) {
@@ -38,15 +54,28 @@ export class GameEngine {
     const currentWeek = Math.floor(this.state.daysElapsed / 7);
 
     if (currentWeek > prevWeek) {
-      this.processWeeklyReward();
+      this.triggerWeeklyRewardCycle();
     }
   }
 
-  processWeeklyReward() {
+  /**
+   * Decoupled Reward Engine
+   * Separates logic from UI triggers.
+   */
+  triggerWeeklyRewardCycle() {
+    const city = CITIES.find(c => c.id === this.state.cityId) || CITIES[0];
+    
+    // Log simulation history for this week
+    this.simulationHistory.push({
+      week: this.state.level,
+      score: this.state.score,
+      totalAssets: { ...this.state.totalResources },
+      timestamp: Date.now()
+    });
+
     this.state.isPausedForReward = true;
     this.state.level++;
 
-    const city = CITIES.find(c => c.id === this.state.cityId) || CITIES[0];
     InventoryManager.validateInventory(this.state, city);
 
     const options: RewardChoice[] = [
@@ -58,6 +87,9 @@ export class GameEngine {
 
     const shuffled = [...options].sort(() => 0.5 - Math.random());
     this.state.pendingRewardOptions = [shuffled[0], shuffled[1]];
+    
+    // Custom Event for headless integrations
+    window.dispatchEvent(new CustomEvent('WEEKLY_REWARD_PENDING', { detail: { week: this.state.level } }));
   }
 
   selectReward(choice: RewardChoice) {
@@ -71,6 +103,9 @@ export class GameEngine {
 
     this.state.pendingRewardOptions = undefined;
     this.state.isPausedForReward = false;
+    
+    // Immediate Audit post-modification
+    this.runAudit();
   }
 
   getDynamicSpawnRate() {
@@ -90,7 +125,6 @@ export class GameEngine {
     const isCreative = this.state.mode === 'CREATIVE';
     const crossing = isSegmentCrossingWater(startStation, endStation, city);
     
-    // Resource check for water crossings
     if (crossing && !isCreative) {
       const needsTunnel = lineIdx % 2 === 0;
       if (needsTunnel && this.state.resources.tunnels <= 0) return;
@@ -100,7 +134,6 @@ export class GameEngine {
     let line = this.state.lines.find(l => l.id === lineIdx);
 
     if (!line) {
-      // Trying to start a new line
       if (!isCreative && this.state.resources.lines <= 0) return;
       
       line = { 
@@ -112,19 +145,17 @@ export class GameEngine {
       this.state.lines.push(line);
       this.addTrainToLine(lineIdx);
     } else {
-      // Extending existing line
-      if (line.stations.includes(endStation.id)) return; // No loops for now to keep it simple
+      if (line.stations.includes(endStation.id)) return; 
 
       if (line.stations[0] === startStation.id) {
         line.stations.unshift(endStation.id);
       } else if (line.stations[line.stations.length - 1] === startStation.id) {
         line.stations.push(endStation.id);
       } else {
-        return; // Can only extend from ends
+        return; 
       }
     }
 
-    // After mutation, run audit to balance available resources automatically
     InventoryManager.validateInventory(this.state, city);
     this.refreshAllPassengerRoutes();
   }
@@ -221,7 +252,6 @@ export class GameEngine {
     const station = this.state.stations.find(s => s.id === stationId);
     if (!station) return;
 
-    // Alighting
     const alighting: Passenger[] = [];
     train.passengers = train.passengers.filter(p => {
       if (p.targetType === station.type) {
@@ -238,7 +268,6 @@ export class GameEngine {
     });
     station.waitingPassengers.push(...alighting);
 
-    // Boarding
     station.waitingPassengers.forEach(p => {
       if (p.requiredLineId === undefined || p.nextTransferStationId === undefined) {
         const leg = this.findNextLeg(station.id, p.targetType);
@@ -259,7 +288,6 @@ export class GameEngine {
       train.passengers.push(...toLoad);
     }
 
-    // Pathing logic
     const isLoop = line.stations.length > 2 && line.stations[0] === line.stations[line.stations.length - 1];
     if (isLoop) {
       if (train.direction === 1) {
@@ -448,21 +476,6 @@ export class GameEngine {
       const city = CITIES.find(c => c.id === this.state.cityId) || CITIES[0];
       InventoryManager.refundLine(this.state, this.state.lines[lineIdx], city);
       this.state.lines.splice(lineIdx, 1);
-      this.refreshAllPassengerRoutes();
-      InventoryManager.validateInventory(this.state, city);
-    }
-  }
-
-  removeSegment(lineId: number, idxA: number, idxB: number) {
-    const line = this.state.lines.find(l => l.id === lineId);
-    if (!line) return;
-    const city = CITIES.find(c => c.id === this.state.cityId) || CITIES[0];
-    
-    // Manual segment removal
-    line.stations.splice(idxB, 1);
-    if (line.stations.length < 2) {
-      this.removeLine(lineId); 
-    } else {
       this.refreshAllPassengerRoutes();
       InventoryManager.validateInventory(this.state, city);
     }
