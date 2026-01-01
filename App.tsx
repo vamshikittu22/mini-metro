@@ -1,27 +1,16 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { GameState, Station, TransitLine, CITIES, City, Point, StationType, GameMode } from './types';
+import { GameState, Station, TransitLine, CITIES, City, Point, StationType, GameMode, RewardChoice } from './types';
 import { THEME, GAME_CONFIG } from './constants';
-import { project, snapToAngle, getDistance, isSegmentCrossingWater, WORLD_SIZE, distToSegment, getBentPath } from './services/geometry';
+import { project, getDistance, isSegmentCrossingWater, getBentPath } from './services/geometry';
 import { GameEngine } from './services/gameEngine';
-import { lerpColor } from './services/utils';
 
 // Components
 import { Stats } from './components/HUD/Stats';
 import { ResourcePanel } from './components/HUD/ResourcePanel';
-import { BaseButton } from './components/UI/BaseButton';
-import { CreativeToolbar } from './components/HUD/CreativeToolbar';
 
 type AppView = 'MAIN_MENU' | 'CITY_SELECT' | 'MODE_SELECT' | 'GAME';
 
 const DAYS = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'];
-
-// Refined Day/Night Cycle Colors
-const DAY_CYCLE_COLORS = {
-  DAY: '#FFFFFF',      // Pure White (Swiss Style)
-  NIGHT: '#1A1A1A',    // Deep Charcoal
-  SUNRISE: '#E0E4E8',  // Cool Grey Dawn
-  SUNSET: '#E8E0D8',   // Warm Dusk
-};
 
 const App: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -29,22 +18,13 @@ const App: React.FC = () => {
   const [currentCity, setCurrentCity] = useState<City | null>(null);
   const [selectedMode, setSelectedMode] = useState<GameMode>('NORMAL');
   const [camera, setCamera] = useState({ x: 0, y: 0, scale: 0.8 });
+  const [showAudit, setShowAudit] = useState(false);
   
   const [gameState, setGameState] = useState<GameState>({
-    cityId: '',
-    mode: 'NORMAL',
-    stations: [],
-    lines: [],
-    score: 0,
-    level: 1,
-    gameActive: true,
-    autoSpawn: true,
-    dayNightAuto: true,
-    isNightManual: false,
-    timeScale: 1,
-    daysElapsed: 0,
-    nextRewardIn: 60000 * 7,
-    resources: { lines: 5, trains: 3, tunnels: 3, bridges: 2, wagons: 5 }
+    cityId: '', mode: 'NORMAL', stations: [], lines: [], score: 0, level: 1, gameActive: true, autoSpawn: true, dayNightAuto: true, isNightManual: false, timeScale: 1, daysElapsed: 0, nextRewardIn: 60000 * 7,
+    resources: { lines: 5, trains: 3, tunnels: 3, bridges: 2, wagons: 5 },
+    totalResources: { lines: 5, trains: 3, tunnels: 3, bridges: 2, wagons: 5 },
+    weeklyAuditLog: [], isPausedForReward: false
   });
 
   const engineRef = useRef<GameEngine | null>(null);
@@ -56,32 +36,23 @@ const App: React.FC = () => {
   const [dragCurrent, setDragCurrent] = useState<Point | null>(null);
   const [activeLineIdx, setActiveLineIdx] = useState(0);
 
-  // Creative Mode state
-  const [creativeTool, setCreativeTool] = useState<'PAN' | 'ERASE' | StationType>('PAN');
-
   const screenToWorld = (sx: number, sy: number) => ({
     x: (sx - camera.x) / camera.scale,
     y: (sy - camera.y) / camera.scale
   });
 
-  const currentBg = useMemo(() => {
-    const { daysElapsed, dayNightAuto, isNightManual } = gameState;
-    if (!dayNightAuto) {
-      return isNightManual ? DAY_CYCLE_COLORS.NIGHT : DAY_CYCLE_COLORS.DAY;
-    }
-    const t = (daysElapsed * 0.5) % 1.0; 
-    if (t < 0.25) return lerpColor(DAY_CYCLE_COLORS.SUNRISE, DAY_CYCLE_COLORS.DAY, t * 4);
-    if (t < 0.5) return lerpColor(DAY_CYCLE_COLORS.DAY, DAY_CYCLE_COLORS.SUNSET, (t - 0.25) * 4);
-    if (t < 0.75) return lerpColor(DAY_CYCLE_COLORS.SUNSET, DAY_CYCLE_COLORS.NIGHT, (t - 0.5) * 4);
-    return lerpColor(DAY_CYCLE_COLORS.NIGHT, DAY_CYCLE_COLORS.SUNRISE, (t - 0.75) * 4);
-  }, [gameState.daysElapsed, gameState.dayNightAuto, gameState.isNightManual]);
-
-  const currentText = useMemo(() => {
-    const isDark = currentBg.toLowerCase() === DAY_CYCLE_COLORS.NIGHT.toLowerCase() || 
-                   currentBg.toLowerCase().startsWith('#1') || 
-                   currentBg.toLowerCase().startsWith('#0');
-    return isDark ? '#FFFFFF' : '#1A1A1A';
-  }, [currentBg]);
+  const handleWheel = (e: React.WheelEvent) => {
+    if (view !== 'GAME') return;
+    const zoomIn = e.deltaY < 0;
+    const factor = zoomIn ? 1.1 : 0.9;
+    const newScale = Math.max(0.1, Math.min(5, camera.scale * factor));
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    const worldMouse = screenToWorld(mx, my);
+    setCamera({ scale: newScale, x: mx - worldMouse.x * newScale, y: my - worldMouse.y * newScale });
+  };
 
   const initGame = (city: City) => {
     setCurrentCity(city);
@@ -94,9 +65,11 @@ const App: React.FC = () => {
       const pos = project(s.lat, s.lon, currentCity);
       return { ...pos, id: s.id, type: s.type, name: s.name, waitingPassengers: [], timer: 0 };
     });
+    
+    const initialInventory = { lines: 5, trains: 3, tunnels: 3, bridges: 2, wagons: 5 };
     const engine = new GameEngine({
       cityId: currentCity.id, mode: selectedMode, stations: initialStations, lines: [], score: 0, level: 1, gameActive: true, autoSpawn: true, dayNightAuto: true, isNightManual: false, timeScale: 1, daysElapsed: 0, nextRewardIn: 60000 * 7,
-      resources: { lines: 5, trains: 3, tunnels: 3, bridges: 2, wagons: 5 }
+      resources: { ...initialInventory }, totalResources: { ...initialInventory }, weeklyAuditLog: [], isPausedForReward: false
     });
     engineRef.current = engine;
     setGameState({ ...engine.state });
@@ -119,18 +92,16 @@ const App: React.FC = () => {
   useEffect(() => {
     if (!currentCity || view !== 'GAME') return;
     let pTimeout: any;
-    const loop = () => {
-      if (engineRef.current && engineRef.current.state.gameActive && engineRef.current.state.autoSpawn) { 
-        engineRef.current.spawnPassenger(); 
-        const nextSpawn = engineRef.current.getDynamicSpawnRate() / currentCity.difficulty;
-        pTimeout = setTimeout(loop, nextSpawn); 
-      } else {
-        pTimeout = setTimeout(loop, 2000); 
-      }
+    const spawnLoop = () => {
+      if (engineRef.current?.state.gameActive && engineRef.current?.state.autoSpawn && !engineRef.current?.state.isPausedForReward) {
+        engineRef.current.spawnPassenger();
+        const next = engineRef.current.getDynamicSpawnRate() / currentCity.difficulty;
+        pTimeout = setTimeout(spawnLoop, next);
+      } else { pTimeout = setTimeout(spawnLoop, 2000); }
     };
-    pTimeout = setTimeout(loop, GAME_CONFIG.spawnRate);
+    pTimeout = setTimeout(spawnLoop, GAME_CONFIG.spawnRate);
     const sInt = setInterval(() => {
-      if (engineRef.current && engineRef.current.state.gameActive && engineRef.current.state.autoSpawn) {
+      if (engineRef.current?.state.gameActive && engineRef.current?.state.autoSpawn && !engineRef.current?.state.isPausedForReward) {
         engineRef.current.spawnStation(window.innerWidth, window.innerHeight, project);
       }
     }, GAME_CONFIG.stationSpawnRate);
@@ -150,17 +121,14 @@ const App: React.FC = () => {
     };
     fId = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(fId);
-  }, [dimensions, camera, isDragging, isPanning, dragStart, dragCurrent, activeLineIdx, currentCity, view, currentBg, creativeTool]);
+  }, [dimensions, camera, isDragging, isPanning, dragStart, dragCurrent, activeLineIdx, currentCity, view]);
 
-  const drawShape = useCallback((ctx: CanvasRenderingContext2D, x: number, y: number, size: number, type: StationType, fill: boolean = true) => {
+  const drawShape = useCallback((ctx: CanvasRenderingContext2D, x: number, y: number, size: number, type: StationType, fill: boolean = true, strokeWidth: number = 2.5) => {
     ctx.beginPath();
     if (type === 'circle') ctx.arc(x, y, size, 0, Math.PI * 2);
     else if (type === 'square') ctx.rect(x - size, y - size, size * 2, size * 2);
     else if (type === 'triangle') {
-      ctx.moveTo(x, y - size);
-      ctx.lineTo(x - size, y + size);
-      ctx.lineTo(x + size, y + size);
-      ctx.closePath();
+      ctx.moveTo(x, y - size); ctx.lineTo(x - size, y + size); ctx.lineTo(x + size, y + size); ctx.closePath();
     } else if (type === 'pentagon') {
       for (let i = 0; i < 5; i++) {
         const a = (i * 2 * Math.PI / 5) - Math.PI / 2;
@@ -175,14 +143,9 @@ const App: React.FC = () => {
       }
       ctx.closePath();
     }
-    if (fill) {
-      ctx.fillStyle = currentBg;
-      ctx.fill();
-    }
-    ctx.strokeStyle = currentText;
-    ctx.lineWidth = 3;
-    ctx.stroke();
-  }, [currentBg, currentText]);
+    if (fill) { ctx.fillStyle = 'white'; ctx.fill(); }
+    ctx.strokeStyle = THEME.text; ctx.lineWidth = strokeWidth; ctx.stroke();
+  }, []);
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
@@ -190,201 +153,77 @@ const App: React.FC = () => {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     const { stations, lines } = engineRef.current.state;
-    const uiScale = Math.pow(1 / camera.scale, 0.85); 
 
-    ctx.fillStyle = currentBg;
+    ctx.fillStyle = THEME.background;
     ctx.fillRect(0, 0, dimensions.width, dimensions.height);
 
     ctx.save();
     ctx.translate(camera.x, camera.y);
     ctx.scale(camera.scale, camera.scale);
 
-    // Grid lines
-    ctx.strokeStyle = lerpColor(currentBg, currentText, 0.08);
+    // Grid
+    ctx.strokeStyle = 'rgba(0,0,0,0.05)';
     ctx.lineWidth = 1;
-    const gridStep = 200;
-    const startX = Math.floor((-camera.x / camera.scale) / gridStep) * gridStep;
-    const endX = Math.ceil((dimensions.width - camera.x / camera.scale) / gridStep) * gridStep;
-    const startY = Math.floor((-camera.y / camera.scale) / gridStep) * gridStep;
-    const endY = Math.ceil((dimensions.height - camera.y / camera.scale) / gridStep) * gridStep;
+    for (let x = -2000; x < 5000; x += 100) { ctx.beginPath(); ctx.moveTo(x, -2000); ctx.lineTo(x, 5000); ctx.stroke(); }
+    for (let y = -2000; y < 5000; y += 100) { ctx.beginPath(); ctx.moveTo(-2000, y); ctx.lineTo(5000, y); ctx.stroke(); }
 
-    for (let x = startX; x <= endX; x += gridStep) {
-      ctx.beginPath(); ctx.moveTo(x, startY); ctx.lineTo(x, endY); ctx.stroke();
-    }
-    for (let y = startY; y <= endY; y += gridStep) {
-      ctx.beginPath(); ctx.moveTo(startX, y); ctx.lineTo(endX, y); ctx.stroke();
-    }
-
-    // Realistic Water Body Rendering with Organic Smoothing and Animation
-    const waterBaseColor = lerpColor(currentBg, '#1a2b38', 0.12);
-    const waterDeepColor = lerpColor(currentBg, '#0d161d', 0.20);
-    const waterEdgeColor = lerpColor(currentBg, '#1a2b38', 0.22);
-    const rippleColor = lerpColor(currentBg, currentText, 0.06);
-    const specColor = lerpColor(currentBg, '#FFFFFF', 0.15); // Specular highlight
-    const time = Date.now() / 2000;
-
+    // Water
+    ctx.fillStyle = '#D1D1D1';
     currentCity.water.forEach(poly => {
-      const waterPoints = poly.map(p => project(p.lat, p.lon, currentCity));
-      if (waterPoints.length < 3) return;
-
-      const drawWaterPath = (c: CanvasRenderingContext2D) => {
-        c.moveTo(waterPoints[0].x, waterPoints[0].y);
-        for (let i = 0; i < waterPoints.length; i++) {
-          const p = waterPoints[i];
-          const next = waterPoints[(i + 1) % waterPoints.length];
-          const midX = (p.x + next.x) / 2;
-          const midY = (p.y + next.y) / 2;
-          c.quadraticCurveTo(p.x, p.y, midX, midY);
-        }
-        c.closePath();
-      };
-
-      ctx.save();
       ctx.beginPath();
-      drawWaterPath(ctx);
-      ctx.strokeStyle = waterEdgeColor;
-      ctx.lineWidth = 20;
-      ctx.lineJoin = 'round';
-      ctx.stroke();
-      
-      ctx.strokeStyle = lerpColor(currentBg, waterBaseColor, 0.5);
-      ctx.lineWidth = 30;
-      ctx.stroke();
-      ctx.restore();
-
-      ctx.save();
-      ctx.beginPath();
-      drawWaterPath(ctx);
-      
-      const avgX = waterPoints.reduce((s, p) => s + p.x, 0) / waterPoints.length;
-      const avgY = waterPoints.reduce((s, p) => s + p.y, 0) / waterPoints.length;
-      const grad = ctx.createRadialGradient(avgX, avgY, 100, avgX, avgY, 1200);
-      grad.addColorStop(0, waterDeepColor);
-      grad.addColorStop(1, waterBaseColor);
-      
-      ctx.fillStyle = grad;
+      const p0 = project(poly[0].lat, poly[0].lon, currentCity);
+      ctx.moveTo(p0.x, p0.y);
+      poly.forEach(pt => { const p = project(pt.lat, pt.lon, currentCity); ctx.lineTo(p.x, p.y); });
       ctx.fill();
-      ctx.restore();
-
-      ctx.save();
-      ctx.beginPath();
-      drawWaterPath(ctx);
-      ctx.clip();
-      
-      const specGrad = ctx.createLinearGradient(
-        Math.cos(time * 0.2) * 2000, 
-        Math.sin(time * 0.2) * 2000, 
-        Math.cos(time * 0.2 + Math.PI) * 2000, 
-        Math.sin(time * 0.2 + Math.PI) * 2000
-      );
-      specGrad.addColorStop(0, 'rgba(255, 255, 255, 0)');
-      specGrad.addColorStop(0.45, 'rgba(255, 255, 255, 0)');
-      specGrad.addColorStop(0.5, specColor);
-      specGrad.addColorStop(0.55, 'rgba(255, 255, 255, 0)');
-      specGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
-      
-      ctx.globalAlpha = 0.3;
-      ctx.fillStyle = specGrad;
-      ctx.fill();
-      ctx.restore();
-
-      ctx.save();
-      ctx.beginPath();
-      drawWaterPath(ctx);
-      ctx.clip();
-      
-      ctx.strokeStyle = rippleColor;
-      ctx.lineWidth = 2.5;
-      ctx.lineCap = 'round';
-      
-      const rippleSpacing = 70;
-      const rxStart = Math.floor((-camera.x / camera.scale) / rippleSpacing) * rippleSpacing;
-      const rxEnd = Math.ceil((dimensions.width - camera.x / camera.scale) / rippleSpacing) * rippleSpacing;
-      const ryStart = Math.floor((-camera.y / camera.scale) / rippleSpacing) * rippleSpacing;
-      const ryEnd = Math.ceil((dimensions.height - camera.y / camera.scale) / rippleSpacing) * rippleSpacing;
-
-      for (let rx = rxStart; rx <= rxEnd; rx += rippleSpacing) {
-        for (let ry = ryStart; ry <= ryEnd; ry += rippleSpacing) {
-          const noise = Math.sin(rx * 0.004 + ry * 0.003 + time) * Math.cos(ry * 0.004 - rx * 0.003 + time * 0.7);
-          
-          if (noise > 0.4) {
-            const rLen = 25 + Math.sin(time + rx * 0.05) * 12;
-            const driftX = Math.sin(time * 0.4 + ry * 0.08) * 20;
-            const driftY = Math.cos(time * 0.4 + rx * 0.08) * 10;
-            const alpha = (noise - 0.4) * 2;
-            
-            ctx.globalAlpha = Math.min(1, alpha);
-            ctx.beginPath();
-            ctx.moveTo(rx + driftX, ry + driftY);
-            ctx.lineTo(rx + driftX + rLen, ry + driftY + (Math.sin(rx + time) * 5));
-            ctx.stroke();
-          }
-        }
-      }
-      ctx.restore();
     });
 
+    // Tunnels/Bridges Visual
+    lines.forEach(line => {
+      for (let i = 1; i < line.stations.length; i++) {
+        const sA = stations.find(s => s.id === line.stations[i-1]);
+        const sB = stations.find(s => s.id === line.stations[i]);
+        if (sA && sB && isSegmentCrossingWater(sA, sB, currentCity)) {
+          const path = [sA, ...getBentPath(sA, sB)];
+          ctx.strokeStyle = '#FFFFFF';
+          ctx.lineWidth = THEME.lineWidth + 4;
+          ctx.lineCap = 'round';
+          ctx.beginPath();
+          ctx.moveTo(path[0].x, path[0].y);
+          for (let j = 1; j < path.length; j++) ctx.lineTo(path[j].x, path[j].y);
+          ctx.stroke();
+          
+          ctx.strokeStyle = line.color;
+          ctx.lineWidth = THEME.lineWidth;
+          ctx.setLineDash([5, 5]); // Dashed tunnel effect
+          ctx.beginPath();
+          ctx.moveTo(path[0].x, path[0].y);
+          for (let j = 1; j < path.length; j++) ctx.lineTo(path[j].x, path[j].y);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+      }
+    });
+
+    // Lines & Trains
     lines.forEach(line => {
       if (line.stations.length < 2) return;
-      line.stations.forEach((sid, idx) => {
-        if (idx === 0) return;
-        const s1 = stations.find(s => s.id === line.stations[idx-1]), s2 = stations.find(s => s.id === sid);
-        if (s1 && s2) {
-          const path = [s1, ...getBentPath(s1, s2)];
-          const crossing = isSegmentCrossingWater(s1, s2, currentCity);
-          
-          ctx.beginPath(); 
-          ctx.strokeStyle = line.color; 
-          ctx.lineWidth = THEME.lineWidth; 
-          ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-          ctx.moveTo(s1.x, s1.y); 
-          path.slice(1).forEach(p => ctx.lineTo(p.x, p.y)); 
-          ctx.stroke();
-
-          if (crossing) {
-            const isTunnel = line.id % 2 === 0;
-            if (isTunnel) {
-              ctx.save();
-              ctx.lineCap = 'butt';
-              ctx.strokeStyle = currentBg;
-              ctx.lineWidth = THEME.lineWidth * 0.75;
-              ctx.setLineDash([12, 12]);
-              ctx.beginPath();
-              ctx.moveTo(s1.x, s1.y);
-              path.slice(1).forEach(p => ctx.lineTo(p.x, p.y));
-              ctx.stroke();
-              ctx.restore();
-              
-              ctx.save();
-              ctx.strokeStyle = line.color;
-              ctx.lineWidth = THEME.lineWidth * 0.25;
-              ctx.setLineDash([2, 22]);
-              ctx.beginPath();
-              ctx.moveTo(s1.x, s1.y);
-              path.slice(1).forEach(p => ctx.lineTo(p.x, p.y));
-              ctx.stroke();
-              ctx.restore();
-            } else {
-              ctx.save();
-              ctx.strokeStyle = currentText;
-              ctx.lineWidth = THEME.lineWidth * 1.35;
-              ctx.beginPath();
-              ctx.moveTo(s1.x, s1.y);
-              path.slice(1).forEach(p => ctx.lineTo(p.x, p.y));
-              ctx.stroke();
-              
-              ctx.strokeStyle = line.color;
-              ctx.lineWidth = THEME.lineWidth;
-              ctx.beginPath();
-              ctx.moveTo(s1.x, s1.y);
-              path.slice(1).forEach(p => ctx.lineTo(p.x, p.y));
-              ctx.stroke();
-              ctx.restore();
-            }
+      ctx.strokeStyle = line.color; ctx.lineWidth = THEME.lineWidth; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.beginPath();
+      const s0 = stations.find(s => s.id === line.stations[0]);
+      if (s0) {
+        ctx.moveTo(s0.x, s0.y);
+        for (let i = 1; i < line.stations.length; i++) {
+          const sA = stations.find(s => s.id === line.stations[i-1]);
+          const sB = stations.find(s => s.id === line.stations[i]);
+          if (sA && sB) {
+            // Only draw non-water segments normally (water segments handled above or drawn over)
+            getBentPath(sA, sB).forEach(pt => ctx.lineTo(pt.x, pt.y));
           }
         }
-      });
+        ctx.stroke();
+      }
 
+      // Render Trains
       line.trains.forEach(train => {
         const sIdx = Math.max(0, Math.min(train.nextStationIndex, line.stations.length - 1));
         const fIdx = Math.max(0, Math.min(train.direction === 1 ? sIdx - 1 : sIdx + 1, line.stations.length - 1));
@@ -399,108 +238,83 @@ const App: React.FC = () => {
             if (curD + segL >= targetD) { const pr = (targetD - curD) / segL; tx = pts[i-1].x + (pts[i].x - pts[i-1].x) * pr; ty = pts[i-1].y + (pts[i].y - pts[i-1].y) * pr; angle = Math.atan2(pts[i].y - pts[i-1].y, pts[i].x - pts[i-1].x); break; }
             curD += segL;
           }
-          
           ctx.save(); ctx.translate(tx, ty); ctx.rotate(angle);
-          ctx.fillStyle = currentText; 
+          // Train body
+          ctx.fillStyle = THEME.text; 
           ctx.fillRect(-THEME.trainWidth/2, -THEME.trainHeight/2, THEME.trainWidth, THEME.trainHeight);
           
-          const enginePassengers = train.passengers.slice(0, GAME_CONFIG.trainCapacity);
-          enginePassengers.forEach((p, i) => {
-            const col = i % 3;
+          // Passenger symbols inside train
+          const pSize = THEME.passengerSize * 0.8;
+          train.passengers.forEach((p, i) => {
             const row = Math.floor(i / 3);
-            const pX = -THEME.trainWidth/2 + 12 + col * 24;
-            const pY = -THEME.trainHeight/2 + 10 + row * 18;
-            ctx.fillStyle = currentBg; ctx.strokeStyle = 'transparent';
-            drawShape(ctx, pX, pY, 6, p.targetType, true);
+            const col = i % 3;
+            const px = -THEME.trainWidth/2 + 8 + col * (pSize + 4);
+            const py = -THEME.trainHeight/2 + 8 + row * (pSize + 4);
+            drawShape(ctx, px, py, pSize / 2, p.targetType, true, 1);
           });
-          
-          for (let w = 0; w < train.wagons; w++) {
-            const offset = -(THEME.trainWidth / 2 + (w + 1) * (THEME.wagonWidth + THEME.wagonGap));
-            ctx.fillStyle = currentText;
-            ctx.fillRect(offset, -THEME.trainHeight / 2, THEME.wagonWidth, THEME.trainHeight);
-            
-            const startIdx = (w + 1) * GAME_CONFIG.trainCapacity;
-            const wagonPassengers = train.passengers.slice(startIdx, startIdx + GAME_CONFIG.trainCapacity);
-            wagonPassengers.forEach((p, i) => {
-              const col = i % 3;
-              const row = Math.floor(i / 3);
-              const pX = offset + 12 + col * 18;
-              const pY = -THEME.trainHeight/2 + 10 + row * 18;
-              ctx.fillStyle = currentBg; ctx.strokeStyle = 'transparent';
-              // Fix typo pY on next line (line 430)
-              drawShape(ctx, pX, pY, 5, p.targetType, true);
-            });
-          }
           ctx.restore();
         }
       });
     });
 
+    // Drag Preview
     if (isDragging && dragStart && dragCurrent) {
-       ctx.strokeStyle = THEME.lineColors[activeLineIdx];
-       ctx.lineWidth = THEME.lineWidth;
-       ctx.beginPath(); ctx.setLineDash([10, 5]);
-       const hitStation = stations.find(s => getDistance(s, dragCurrent) < 50 / camera.scale);
-       const targetPoint = hitStation ? { x: hitStation.x, y: hitStation.y } : snapToAngle(dragStart, dragCurrent);
-       const path = getBentPath(dragStart, targetPoint);
-       ctx.moveTo(dragStart.x, dragStart.y);
-       path.forEach(p => ctx.lineTo(p.x, p.y));
-       ctx.stroke(); ctx.setLineDash([]);
+      ctx.strokeStyle = THEME.lineColors[activeLineIdx]; ctx.lineWidth = THEME.lineWidth; ctx.setLineDash([15, 10]);
+      ctx.beginPath(); ctx.moveTo(dragStart.x, dragStart.y);
+      getBentPath(dragStart, dragCurrent).forEach(p => ctx.lineTo(p.x, p.y));
+      ctx.stroke(); ctx.setLineDash([]);
     }
 
-    // Creative mode ghost preview
-    if (gameState.mode === 'CREATIVE' && creativeTool !== 'PAN' && creativeTool !== 'ERASE' && dragCurrent && !isDragging) {
-      ctx.save();
-      ctx.globalAlpha = 0.3;
-      drawShape(ctx, dragCurrent.x, dragCurrent.y, THEME.stationSize * uiScale, creativeTool as StationType, true);
-      ctx.restore();
-    }
-
+    // Stations & Passengers
     stations.forEach(s => {
-      const size = THEME.stationSize * uiScale;
-      drawShape(ctx, s.x, s.y, size, s.type, true);
-
-      ctx.fillStyle = currentText; ctx.font = `900 ${18 * uiScale}px Inter`; ctx.textAlign = 'center'; 
-      ctx.fillText(s.name.toUpperCase(), s.x, s.y + size + (28 * uiScale));
-
+      drawShape(ctx, s.x, s.y, THEME.stationSize, s.type);
+      ctx.fillStyle = THEME.text; ctx.font = '900 12px Inter'; ctx.textAlign = 'center';
+      ctx.fillText(s.name.toUpperCase(), s.x, s.y + THEME.stationSize + 20);
+      
+      const pSize = THEME.passengerSize;
       s.waitingPassengers.forEach((p, i) => {
-        const pS = THEME.passengerSize * uiScale;
-        const spacing = pS * 2.8;
-        const cols = 3;
-        const ox = (size + 15 * uiScale) + (Math.floor(i / cols) * spacing);
-        const px = s.x + ox;
-        const py = s.y - (size - 8 * uiScale) + (i % cols) * spacing;
-        
-        ctx.fillStyle = currentText; ctx.strokeStyle = 'transparent';
-        drawShape(ctx, px, py, pS, p.targetType, true);
+        const px = s.x + THEME.stationSize + 10 + (i % 3) * (pSize + 4);
+        const py = s.y - THEME.stationSize + Math.floor(i / 3) * (pSize + 4);
+        drawShape(ctx, px, py, pSize / 2, p.targetType, true, 1.5);
       });
 
-      if (s.timer > 0) { ctx.strokeStyle='#FF4444'; ctx.lineWidth=7*uiScale; ctx.beginPath(); ctx.arc(s.x,s.y,size+14*uiScale, -Math.PI/2, -Math.PI/2+Math.PI*2*s.timer); ctx.stroke(); }
+      // Failure timer
+      if (s.timer > 0) {
+        ctx.beginPath();
+        ctx.strokeStyle = '#EB2827';
+        ctx.lineWidth = 4;
+        ctx.arc(s.x, s.y, THEME.stationSize + 6, -Math.PI/2, -Math.PI/2 + s.timer * Math.PI * 2);
+        ctx.stroke();
+      }
     });
-    ctx.restore();
-  }, [dimensions, gameState, camera, currentCity, isDragging, dragStart, dragCurrent, activeLineIdx, view, currentBg, currentText, drawShape, creativeTool]);
 
-  const MenuButton = ({ label, icon, onClick }: { label: string, icon?: string, onClick?: () => void }) => (
-    <div className="flex items-center gap-4 group cursor-pointer" onClick={onClick}>
-      <span className="text-white text-4xl group-hover:translate-x-2 transition-transform">{icon || '→'}</span>
-      <div className="bg-[#3E86C6] px-6 py-2">
-        <span className="text-white text-5xl font-black uppercase tracking-tight">{label}</span>
-      </div>
-    </div>
-  );
+    ctx.restore();
+  }, [dimensions, camera, currentCity, drawShape, isDragging, dragStart, dragCurrent, activeLineIdx]);
+
+  const handleLineDelete = () => {
+    if (engineRef.current) {
+      engineRef.current.removeLine(activeLineIdx);
+      setGameState({ ...engineRef.current.state });
+    }
+  };
+
+  const handleAddTrain = () => {
+    if (engineRef.current) {
+      engineRef.current.addTrainToLine(activeLineIdx);
+      setGameState({ ...engineRef.current.state });
+    }
+  };
 
   if (view === 'MAIN_MENU') {
     return (
-      <div className="fixed inset-0 bg-[#222222] z-[300] flex flex-col items-start justify-center p-24 overflow-hidden select-none">
-        <h1 className="text-9xl font-black tracking-tighter text-white mb-20 uppercase flex items-center gap-4">
-          Mini Metro <span className="text-4xl">▲</span>
-        </h1>
-        <div className="flex flex-col gap-8">
-          <MenuButton label="Play" onClick={() => setView('CITY_SELECT')} />
-          <MenuButton label="Resume" icon="↗" />
-          <MenuButton label="Daily Challenge" icon="→" />
-          <MenuButton label="Options" icon="↓" />
-          <MenuButton label="Exit" icon="↙" />
+      <div className="fixed inset-0 bg-[#1A1A1A] flex flex-col items-start justify-center p-24 select-none">
+        <h1 className="text-[120px] font-black tracking-tighter text-white mb-20 leading-none">MINI METRO ▲</h1>
+        <div className="flex flex-col gap-4">
+          <MenuBtn icon="→" onClick={() => setView('CITY_SELECT')}>Play</MenuBtn>
+          <MenuBtn icon="↗" onClick={() => {}}>Resume</MenuBtn>
+          <MenuBtn icon="→" onClick={() => {}}>Daily Challenge</MenuBtn>
+          <MenuBtn icon="↓" onClick={() => {}}>Options</MenuBtn>
+          <MenuBtn icon="↙" onClick={() => {}}>Exit</MenuBtn>
         </div>
       </div>
     );
@@ -508,259 +322,139 @@ const App: React.FC = () => {
 
   if (view === 'CITY_SELECT') {
     return (
-      <div className="fixed inset-0 bg-[#222222] z-[300] flex flex-col items-center p-24 overflow-y-auto no-scrollbar select-none">
-        <div className="w-full flex justify-between items-center mb-16">
-          <h2 className="text-7xl font-black text-white/10 uppercase tracking-tighter">Cities</h2>
-          <button onClick={() => setView('MAIN_MENU')} className="text-white text-xl font-black uppercase tracking-widest opacity-40 hover:opacity-100 transition-opacity">Back</button>
+      <div className="fixed inset-0 bg-[#1A1A1A] p-24 text-white overflow-y-auto">
+        <div className="flex justify-between items-center mb-16">
+          <h2 className="text-8xl font-black opacity-20 uppercase tracking-tighter">Cities</h2>
+          <button onClick={() => setView('MAIN_MENU')} className="text-xl font-black uppercase tracking-widest opacity-40 hover:opacity-100 transition-all">Back</button>
         </div>
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-12 w-full pb-12">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-12">
           {CITIES.map(city => (
-            <div 
-              key={city.id} 
-              onClick={() => initGame(city)}
-              className="flex-shrink-0 cursor-pointer group"
-            >
-              <h3 className="text-5xl font-black text-white mb-6 group-hover:translate-x-2 transition-transform uppercase tracking-tighter">{city.name}</h3>
-              <div className="aspect-[4/3] bg-[#1a1a1a] border border-white/5 relative p-10 flex flex-col justify-between overflow-hidden rounded-sm hover:border-white/20 transition-all">
-                <div className="absolute inset-0 opacity-10 pointer-events-none">
-                   <div className="absolute top-1/2 left-0 right-0 h-1" style={{ backgroundColor: city.color }} />
-                   <div className="absolute top-0 bottom-0 left-1/3 w-1" style={{ backgroundColor: THEME.lineColors[1] }} />
-                   <div className="absolute top-1/4 bottom-1/4 left-1/2 w-1 -rotate-45" style={{ backgroundColor: THEME.lineColors[3] }} />
+            <div key={city.id} onClick={() => initGame(city)} className="cursor-pointer group">
+              <h3 className="text-5xl font-black uppercase tracking-tighter mb-6 group-hover:text-[#3E86C6] transition-colors">{city.name}</h3>
+              <div className="aspect-square bg-white/5 border border-white/10 relative overflow-hidden p-8 transition-all group-hover:border-white/30">
+                <div className="flex gap-2 mb-4">
+                  <div className="w-3 h-3 rounded-full bg-red-500" />
+                  <div className="w-3 h-3 rounded-full bg-blue-500" />
+                  <div className="w-3 h-3 rounded-full bg-green-500" />
                 </div>
-                
-                <div className="relative z-10">
-                  <div className="flex gap-2 mb-4">
-                    {THEME.lineColors.slice(0, 4).map((c, i) => (
-                      <div key={i} className="w-3 h-3 rounded-full" style={{ backgroundColor: c }} />
-                    ))}
-                  </div>
-                  <p className="text-white/40 text-sm font-bold uppercase tracking-wider leading-tight">
-                    Redesign the original transit network of {city.name}. Difficulty: {(city.difficulty * 10).toFixed(0)}/10.
-                  </p>
-                </div>
-                
-                <div className="absolute top-0 right-0 p-4">
-                  <div className="w-8 h-8 bg-white/10 group-hover:bg-white transition-colors flex items-center justify-center">
-                    <span className="text-black text-xl">↗</span>
-                  </div>
+                <p className="text-[10px] font-bold opacity-40 uppercase tracking-widest">Efficiency Required: {Math.floor(city.difficulty * 10)}/10.</p>
+                <div className="absolute inset-0 flex items-center justify-center opacity-10 pointer-events-none">
+                   <div className="w-full h-px bg-white rotate-[30deg]" />
+                   <div className="absolute top-1/2 left-1/2 w-48 h-px bg-white -rotate-[15deg] origin-center" />
                 </div>
               </div>
             </div>
           ))}
-        </div>
-
-        <div className="fixed bottom-12 right-24 flex gap-12">
-           <div className="flex items-center gap-4 cursor-pointer group" onClick={() => { if(currentCity) setView('MODE_SELECT') }}>
-              <span className="text-white text-3xl">→</span>
-              <div className="bg-[#51A03E] px-4 py-2">
-                <span className="text-white text-5xl font-black uppercase tracking-tight">System Start</span>
-              </div>
-            </div>
         </div>
       </div>
     );
   }
 
   if (view === 'MODE_SELECT') {
-    const modes: { id: GameMode, label: string, desc: string }[] = [
-      { id: 'NORMAL', label: 'Normal', desc: 'Standard metro operations. Stations overcrowd normally.' },
-      { id: 'EXTREME', label: 'Extreme', desc: 'Accelerated passenger growth. Overcrowding happens fast.' },
-      { id: 'ENDLESS', label: 'Endless', desc: 'No system failure. Build your dream network forever.' },
-      { id: 'CREATIVE', label: 'Creative', desc: 'Stations do not overcrowd. Place and edit stations freely.' },
-    ];
-
     return (
-      <div className="fixed inset-0 bg-[#222222] z-[300] flex flex-col items-center justify-center p-24 select-none">
-        <div className="flex flex-col gap-6 text-center">
-          {modes.map(mode => (
-            <div 
-              key={mode.id}
-              onClick={() => setSelectedMode(mode.id)}
-              className={`px-12 py-4 cursor-pointer transition-all ${selectedMode === mode.id ? 'bg-[#51A03E] scale-110' : 'opacity-40 hover:opacity-100'}`}
-            >
-              <span className={`text-white font-black uppercase tracking-tighter ${selectedMode === mode.id ? 'text-8xl' : 'text-6xl'}`}>
-                {mode.label}
-              </span>
-            </div>
+      <div className="fixed inset-0 bg-[#1A1A1A] flex flex-col items-center justify-center p-24 text-white">
+        <div className="flex flex-col items-center gap-12 mb-32">
+          {(['NORMAL', 'EXTREME', 'ENDLESS', 'CREATIVE'] as GameMode[]).map(m => (
+            <ModeItem key={m} label={m} active={selectedMode === m} onClick={() => setSelectedMode(m)} />
           ))}
         </div>
-        
-        <div className="mt-12 text-center max-w-lg min-h-[100px]">
-          <p className="text-white/60 text-xl font-bold uppercase tracking-widest leading-relaxed">
-            {modes.find(m => m.id === selectedMode)?.desc}
-          </p>
-          <div className="mt-12 flex flex-col items-center gap-2">
-            <div className="w-2 h-16 bg-[#51A03E]" />
-            <div className="w-8 h-8 rounded-full border-4 border-white" />
-            <div className="w-2 h-16 bg-[#51A03E]" />
+        <div className="flex flex-col items-center gap-4 cursor-pointer group" onClick={startGame}>
+          <div className="w-12 h-12 border-2 border-[#2ECC71] group-hover:bg-[#2ECC71] transition-all rounded-full flex items-center justify-center relative">
+             <div className="w-px h-8 bg-[#2ECC71] group-hover:bg-white absolute" />
+             <div className="w-8 h-px bg-[#2ECC71] group-hover:bg-white absolute" />
           </div>
+          <span className="text-xl font-black uppercase tracking-[0.4em] group-hover:text-[#2ECC71]">Confirm Connection</span>
         </div>
-
-        <button 
-          onClick={startGame}
-          className="mt-12 text-white text-2xl font-black uppercase tracking-[0.5em] hover:text-[#51A03E] transition-colors"
-        >
-          Confirm Connection
-        </button>
       </div>
     );
   }
 
   return (
-    <div className="relative w-screen h-screen select-none overflow-hidden font-sans" style={{ backgroundColor: currentBg }}>
-      <div className="absolute top-0 left-0 w-full p-8 flex justify-between items-start z-10 pointer-events-auto">
-        <div className="flex flex-col gap-4 pointer-events-auto">
-          <div>
-            <div className="flex items-center gap-3">
-              <h1 className="text-4xl font-black tracking-tighter uppercase" style={{ color: currentText }}>{currentCity?.name}</h1>
-              <div className="px-3 py-1 rounded-sm text-[10px] font-black uppercase shadow-lg" style={{ backgroundColor: currentText, color: currentBg }}>WEEK {gameState.level}</div>
-            </div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.4em] mt-1" style={{ color: lerpColor(currentBg, currentText, 0.4) }}>{DAYS[Math.floor(gameState.daysElapsed % 7)]}</p>
-          </div>
-          <button onClick={() => setView('CITY_SELECT')} className="text-[10px] font-black uppercase tracking-widest transition-colors flex items-center gap-2" style={{ color: lerpColor(currentBg, currentText, 0.4) }}>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-            System Select
-          </button>
+    <div className="relative w-screen h-screen overflow-hidden bg-[#EBEBEB]">
+      <div className="absolute top-8 left-8 z-50 pointer-events-auto flex flex-col gap-1">
+        <div className="flex items-center gap-3">
+          <h1 className="text-4xl font-black uppercase tracking-tighter">{currentCity?.name}</h1>
+          <div className="bg-black text-white px-2 py-0.5 text-[10px] font-black uppercase rounded-sm">Week {gameState.level}</div>
         </div>
-        <Stats 
-          score={gameState.score} 
-          timeScale={gameState.timeScale} 
-          autoSpawn={gameState.autoSpawn}
-          dayNightAuto={gameState.dayNightAuto}
-          isNightManual={gameState.isNightManual}
-          currentText={currentText}
-          currentBg={currentBg}
-          onSpeedChange={(s) => { if(engineRef.current) engineRef.current.state.timeScale = s; setGameState({...gameState, timeScale: s}); }} 
-          onToggleAutoSpawn={() => { if(engineRef.current) engineRef.current.state.autoSpawn = !engineRef.current.state.autoSpawn; setGameState({...gameState, autoSpawn: !gameState.autoSpawn}); }}
-          onToggleDayNightAuto={() => { if(engineRef.current) engineRef.current.state.dayNightAuto = !engineRef.current.state.dayNightAuto; setGameState({...gameState, dayNightAuto: !gameState.dayNightAuto}); }}
-          onToggleManualDayNight={() => { if(engineRef.current) engineRef.current.state.isNightManual = !engineRef.current.state.isNightManual; setGameState({...gameState, isNightManual: !gameState.isNightManual}); }}
-        />
+        <p className="text-[10px] font-bold uppercase opacity-40 tracking-[0.3em]">{DAYS[Math.floor(gameState.daysElapsed % 7)]}</p>
+        <button onClick={() => setView('CITY_SELECT')} className="text-[9px] font-black uppercase tracking-widest opacity-30 hover:opacity-100 mt-4">← System Select</button>
       </div>
 
-      <canvas 
-        ref={canvasRef} 
-        width={dimensions.width} 
-        height={dimensions.height} 
+      <Stats score={gameState.score} timeScale={gameState.timeScale} onSpeedChange={(s) => { if(engineRef.current) engineRef.current.state.timeScale = s; setGameState({...gameState, timeScale: s}); }} />
+
+      <canvas ref={canvasRef} width={dimensions.width} height={dimensions.height} onWheel={handleWheel}
         onMouseDown={e => {
-          if (!gameState.gameActive) return;
           const rect = canvasRef.current?.getBoundingClientRect(); if (!rect) return;
           const world = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
-          
-          const hit = gameState.stations.find(s => getDistance(s, world) < 30 / camera.scale);
-          
-          if (gameState.mode === 'CREATIVE' && creativeTool === 'ERASE' && hit) {
-             engineRef.current?.removeStation(hit.id);
-             return;
-          }
-
-          if (gameState.mode === 'CREATIVE' && creativeTool !== 'PAN' && creativeTool !== 'ERASE' && !hit) {
-             engineRef.current?.addManualStation(creativeTool as StationType, world.x, world.y);
-             return;
-          }
-
-          if (hit) { setDragStart(hit); setIsDragging(true); } 
-          else { setIsPanning(true); setDragCurrent({ x: e.clientX, y: e.clientY }); }
-        }} 
+          const hit = gameState.stations.find(s => getDistance(s, world) < 40 / camera.scale);
+          if (hit) { setDragStart(hit); setIsDragging(true); setDragCurrent(world); } else { setIsPanning(true); setDragCurrent({ x: e.clientX, y: e.clientY }); }
+        }}
         onMouseMove={e => {
           const rect = canvasRef.current?.getBoundingClientRect(); if (!rect) return;
-          if (isPanning && dragCurrent) { setCamera(prev => ({ ...prev, x: prev.x + (e.clientX - dragCurrent.x), y: prev.y + (e.clientY - dragCurrent.y) })); setDragCurrent({ x: e.clientX, y: e.clientY }); }
-          else if (isDragging) setDragCurrent(screenToWorld(e.clientX - rect.left, e.clientY - rect.top));
-          else setDragCurrent(screenToWorld(e.clientX - rect.left, e.clientY - rect.top));
-        }} 
+          if (isPanning && dragCurrent) { setCamera(prev => ({ ...prev, x: prev.x + (e.clientX - dragCurrent.x), y: prev.y + (e.clientY - dragCurrent.y) })); setDragCurrent({ x: e.clientX, y: e.clientY }); } 
+          else if (isDragging) { setDragCurrent(screenToWorld(e.clientX - rect.left, e.clientY - rect.top)); }
+        }}
         onMouseUp={e => {
-          if (isPanning) { setIsPanning(false); setDragCurrent(null); }
-          else if (isDragging && dragStart && engineRef.current) {
+          if (isDragging && dragStart && engineRef.current) {
             const rect = canvasRef.current?.getBoundingClientRect(); if (!rect) return;
             const worldMouse = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
-            const hit = gameState.stations.find(s => getDistance(s, worldMouse) < 30 / camera.scale);
-            if (hit && hit.id !== dragStart.id) {
-              const water = isSegmentCrossingWater(dragStart, hit, currentCity!);
-              const canCross = !water || (activeLineIdx % 2 === 0 ? engineRef.current.state.resources.tunnels > 0 : engineRef.current.state.resources.bridges > 0) || gameState.mode === 'CREATIVE';
-              
-              if (canCross) {
-                let line = engineRef.current.state.lines.find(l => l.id === activeLineIdx);
-                if (!line && (engineRef.current.state.resources.lines > 0 || gameState.mode === 'CREATIVE')) {
-                  line = { id: activeLineIdx, color: THEME.lineColors[activeLineIdx], stations: [dragStart.id, hit.id], trains: [{ id: Date.now(), lineId: activeLineIdx, nextStationIndex: 1, progress: 0, direction: 1, passengers: [], capacity: GAME_CONFIG.trainCapacity, wagons: 0 }] };
-                  engineRef.current.state.lines.push(line); 
-                  if (gameState.mode !== 'CREATIVE') engineRef.current.state.resources.lines--; 
-                  if (water && gameState.mode !== 'CREATIVE') {
-                    if (activeLineIdx % 2 === 0) engineRef.current.state.resources.tunnels--;
-                    else engineRef.current.state.resources.bridges--;
-                  }
-                  engineRef.current.refreshAllPassengerRoutes();
-                } else if (line) {
-                  if (line.stations[0] === dragStart.id) { line.stations.unshift(hit.id); line.trains.forEach(t => t.nextStationIndex++); }
-                  else if (line.stations[line.stations.length-1] === dragStart.id) line.stations.push(hit.id);
-                  if (water && gameState.mode !== 'CREATIVE') {
-                    if (activeLineIdx % 2 === 0) engineRef.current.state.resources.tunnels--;
-                    else engineRef.current.state.resources.bridges--;
-                  }
-                  engineRef.current.refreshAllPassengerRoutes();
-                }
-              }
-            }
-            setIsDragging(false); setDragStart(null); setDragCurrent(null);
-          }
-        }} 
-        onWheel={e => {
-          const rect = canvasRef.current?.getBoundingClientRect(); if (!rect) return;
-          const mX = e.clientX - rect.left, mY = e.clientY - rect.top, d = -e.deltaY * 0.001, nS = Math.min(2.0, Math.max(0.3, camera.scale + d));
-          const wX = (mX - camera.x) / camera.scale, wY = (mY - camera.y) / camera.scale;
-          setCamera({ x: mX - wX * nS, y: mY - wY * nS, scale: nS });
-        }} 
-        onContextMenu={e => {
-          e.preventDefault();
-          if (!gameState.gameActive || !engineRef.current) return;
-          const rect = canvasRef.current?.getBoundingClientRect();
-          const world = screenToWorld(e.clientX - rect!.left, e.clientY - rect!.top);
-          const hitStation = gameState.stations.find(s => getDistance(s, world) < 40 / camera.scale);
-          
-          if (gameState.mode === 'CREATIVE' && hitStation) {
-             engineRef.current.removeStation(hitStation.id);
-             return;
-          }
-
-          if (hitStation) {
-            const line = gameState.lines.find(l => l.id === activeLineIdx);
-            if (line) {
-              const idx = line.stations.indexOf(hitStation.id);
-              // CRITICAL: Ensure we pass correct segment neighbors for reclamation
-              if (idx === 0 && line.stations.length > 1) engineRef.current.removeSegment(line.id, 0, 1);
-              else if (idx === line.stations.length - 1 && line.stations.length > 1) engineRef.current.removeSegment(line.id, idx - 1, idx);
+            const hit = gameState.stations.find(s => getDistance(s, worldMouse) < 40 / camera.scale);
+            
+            if (hit && hit.id !== dragStart.id && currentCity) {
+              engineRef.current.tryConnectStations(activeLineIdx, dragStart, hit, currentCity);
+              setGameState({ ...engineRef.current.state });
             }
           }
+          setIsPanning(false); setIsDragging(false); setDragStart(null); setDragCurrent(null);
         }}
       />
-      
-      <ResourcePanel 
-        resources={gameState.resources} 
-        activeLineIdx={activeLineIdx} 
-        onLineIdxChange={setActiveLineIdx} 
-        lines={gameState.lines}
-        onAddTrain={() => engineRef.current?.addTrainToLine(activeLineIdx)}
-        onRemoveTrain={(tId) => engineRef.current?.removeTrainFromLine(activeLineIdx, tId)}
-        onAddWagon={(tId) => engineRef.current?.addWagonToTrain(activeLineIdx, tId)}
-        onRemoveWagon={(tId) => engineRef.current?.removeWagonFromTrain(activeLineIdx, tId)}
-        onDeleteLine={() => { engineRef.current?.removeLine(activeLineIdx); }}
-        mode={gameState.mode}
-      />
 
-      {gameState.mode === 'CREATIVE' && (
-        <CreativeToolbar activeTool={creativeTool} onToolChange={setCreativeTool} />
+      <ResourcePanel resources={gameState.resources} activeLineIdx={activeLineIdx} onLineIdxChange={setActiveLineIdx} lines={gameState.lines} onAddTrain={handleAddTrain} onDeleteLine={handleLineDelete} onAudit={() => setShowAudit(!showAudit)} />
+
+      {showAudit && (
+        <div className="fixed bottom-32 left-8 z-[100] bg-white p-8 border-2 border-black/5 shadow-2xl min-w-[300px]">
+           <h4 className="text-xs font-black uppercase mb-4">System Audit</h4>
+           {Object.entries(gameState.totalResources).map(([k, v]) => (
+             <div key={k} className="flex justify-between py-1 text-[10px] font-bold uppercase">
+               <span className="opacity-40">{k}</span>
+               <span>{gameState.resources[k as keyof typeof gameState.resources]} / {v}</span>
+             </div>
+           ))}
+        </div>
       )}
 
-      {!gameState.gameActive && (
-        <div className="absolute inset-0 z-[200] flex items-center justify-center bg-black/90 backdrop-blur pointer-events-auto">
-          <div className="text-center">
-            <h2 className="text-8xl font-black uppercase tracking-tighter text-white mb-4">Service Terminated</h2>
-            <p className="text-2xl font-medium text-white/40 mb-12">System overload. Total score: {gameState.score}</p>
-            <BaseButton size="lg" onClick={() => window.location.reload()}>Reboot System</BaseButton>
+      {gameState.isPausedForReward && gameState.pendingRewardOptions && (
+        <div className="fixed inset-0 z-[400] flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white p-12 max-w-2xl w-full border-4 border-black">
+            <h2 className="text-4xl font-black uppercase tracking-tighter mb-12">System Upgrade</h2>
+            <div className="grid grid-cols-2 gap-6">
+              {gameState.pendingRewardOptions.map(choice => (
+                <button key={choice.id} onClick={() => { engineRef.current?.selectReward(choice); setGameState({...engineRef.current!.state}); }} className="flex flex-col items-center p-8 bg-black text-white hover:bg-[#2ECC71]">
+                  <span className="text-[10px] font-black uppercase opacity-60 mb-2">{choice.label}</span>
+                  <span className="text-xl font-black uppercase">{choice.description}</span>
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       )}
     </div>
   );
 };
+
+const MenuBtn = ({ children, icon, onClick }: any) => (
+  <div onClick={onClick} className="flex items-center gap-6 group cursor-pointer">
+    <span className="text-white/40 text-3xl font-black group-hover:text-[#3E86C6]">{icon}</span>
+    <div className="bg-[#3E86C6] px-8 py-3 group-hover:bg-white group-hover:text-black transition-all">
+      <span className="text-4xl font-black text-white group-hover:text-black uppercase tracking-tighter">{children}</span>
+    </div>
+  </div>
+);
+
+const ModeItem = ({ label, active, onClick }: any) => (
+  <div onClick={onClick} className={`cursor-pointer transition-all ${active ? 'bg-[#2ECC71] px-16 py-4' : 'opacity-40 hover:opacity-100'}`}>
+    <span className={`text-6xl font-black uppercase tracking-tighter ${active ? 'text-white' : 'text-white/40'}`}>{label}</span>
+  </div>
+);
 
 export default App;

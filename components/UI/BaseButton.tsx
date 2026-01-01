@@ -14,26 +14,24 @@ export const BaseButton: React.FC<BaseButtonProps> = ({
   className = '',
   ...props 
 }) => {
-  const baseStyles = 'inline-flex items-center justify-center font-black uppercase tracking-widest transition-all rounded-sm select-none';
+  const baseStyles = 'inline-flex items-center justify-center font-black uppercase tracking-widest transition-all select-none rounded-sm';
   
   const variants = {
-    primary: 'bg-white text-black hover:bg-white/80 shadow-lg',
-    secondary: 'bg-white/10 text-white border border-white/5 hover:bg-white/20',
-    ghost: 'text-white/40 hover:text-white transition-colors',
-    danger: 'bg-red-500/10 text-red-600 border border-red-500/20 hover:bg-red-500 hover:text-white',
+    primary: 'bg-[#2F3436] text-[#F8F4EE] hover:bg-black',
+    secondary: 'bg-black/5 text-black hover:bg-black/10 border border-black/5',
+    ghost: 'text-black/30 hover:text-black transition-colors',
+    danger: 'text-red-500 hover:bg-red-500 hover:text-white',
   };
 
   const sizes = {
-    sm: 'px-3 py-1 text-[9px]',
-    md: 'px-6 py-2 text-[10px]',
-    lg: 'px-12 py-4 text-sm',
+    sm: 'px-4 py-1.5 text-[9px]',
+    md: 'px-8 py-3 text-[10px]',
+    lg: 'px-16 py-6 text-sm',
   };
-
-  const activeStyles = active ? 'bg-white text-black' : '';
 
   return (
     <button 
-      className={`${baseStyles} ${variants[variant]} ${sizes[size]} ${activeStyles} ${className}`}
+      className={`${baseStyles} ${variants[variant]} ${sizes[size]} ${className}`}
       {...props}
     >
       {children}

@@ -1,8 +1,11 @@
 export const THEME = {
-  background: '#222222',
-  text: '#FFFFFF',
-  stationStroke: '#FFFFFF',
-  stationFill: '#222222',
+  background: '#EBEBEB',
+  menuBg: '#1A1A1A',
+  text: '#1A1A1A',
+  menuText: '#FFFFFF',
+  accentBlue: '#3E86C6',
+  accentGreen: '#2ECC71',
+  stationStroke: '#1A1A1A',
   lineColors: [
     '#EB2827', // Red
     '#3E86C6', // Blue
@@ -15,16 +18,12 @@ export const THEME = {
     '#F3A9BB', // Pink
     '#00782A'  // Dark Green
   ],
-  lineWidth: 12,
-  stationSize: 16,
-  passengerSize: 8,
-  trainWidth: 70,  
-  trainHeight: 38, 
-  wagonWidth: 60,  
-  wagonGap: 8,     
+  lineWidth: 8,
+  stationSize: 22, // Increased from 14
+  passengerSize: 8, // Increased from 6
+  trainWidth: 54,  
+  trainHeight: 30, 
   timerThreshold: 10000, 
-  minZoom: 0.2,
-  maxZoom: 2.0
 };
 
 export const GAME_CONFIG = {
@@ -33,5 +32,4 @@ export const GAME_CONFIG = {
   spawnRate: 4000, 
   stationSpawnRate: 30000, 
   trainSpeed: 0.002, 
-  MAX_GAME_TIME: 600000,
 };

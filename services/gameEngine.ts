@@ -1,8 +1,9 @@
 import { 
-  GameState, Station, TransitLine, Train, Passenger, StationType, CITIES, City 
+  GameState, Station, TransitLine, Train, Passenger, StationType, CITIES, City, RewardChoice 
 } from '../types';
 import { GAME_CONFIG, THEME } from '../constants';
 import { getDistance, isSegmentCrossingWater, project } from './geometry';
+import { InventoryManager } from './inventoryManager';
 
 export class GameEngine {
   state: GameState;
@@ -16,7 +17,7 @@ export class GameEngine {
   }
 
   update(currentTime: number) {
-    if (!this.state.gameActive) return;
+    if (!this.state.gameActive || this.state.isPausedForReward) return;
     if (this.lastUpdate === 0) {
       this.lastUpdate = currentTime;
       return;
@@ -28,32 +29,48 @@ export class GameEngine {
     this.updateTime(dt);
     this.updateTrains(dt);
     this.updateStations(dt);
-    this.updateLevel();
     this.checkFailure();
   }
 
   updateTime(dt: number) {
+    const prevWeek = Math.floor(this.state.daysElapsed / 7);
     this.state.daysElapsed += dt / 60000;
-    this.state.nextRewardIn -= dt;
-    if (this.state.nextRewardIn <= 0) {
-      this.state.nextRewardIn = 60000 * 7; 
+    const currentWeek = Math.floor(this.state.daysElapsed / 7);
+
+    if (currentWeek > prevWeek) {
+      this.processWeeklyReward();
     }
   }
 
-  updateLevel() {
-    const newLevel = Math.floor(this.state.daysElapsed / 7) + 1;
-    if (newLevel > this.state.level) {
-      this.state.level = newLevel;
-      this.giveReward();
-    }
+  processWeeklyReward() {
+    this.state.isPausedForReward = true;
+    this.state.level++;
+
+    const city = CITIES.find(c => c.id === this.state.cityId) || CITIES[0];
+    InventoryManager.validateInventory(this.state, city);
+
+    const options: RewardChoice[] = [
+      { id: 'ext', label: 'Expansion Pack', description: '1 Line + 1 Locomotive', bonus: { lines: 1, trains: 1 } },
+      { id: 'eng', label: 'Engineer Pack', description: '1 Locomotive + 2 Tunnels', bonus: { trains: 1, tunnels: 2 } },
+      { id: 'hvy', label: 'Heavy Duty Pack', description: '1 Locomotive + 2 Wagons', bonus: { trains: 1, wagons: 2 } },
+      { id: 'riv', label: 'River Support', description: '2 Tunnels + 2 Bridges', bonus: { tunnels: 2, bridges: 2 } }
+    ];
+
+    const shuffled = [...options].sort(() => 0.5 - Math.random());
+    this.state.pendingRewardOptions = [shuffled[0], shuffled[1]];
   }
 
-  giveReward() {
-    this.state.resources.lines += 1;
-    this.state.resources.trains += 2;
-    this.state.resources.tunnels += 2;
-    this.state.resources.bridges += 1;
-    this.state.resources.wagons += 3;
+  selectReward(choice: RewardChoice) {
+    InventoryManager.applyReward(this.state, choice.bonus);
+    
+    this.state.weeklyAuditLog.push({
+      week: this.state.level - 1,
+      choice: choice.label,
+      snapshot: { ...this.state.totalResources }
+    });
+
+    this.state.pendingRewardOptions = undefined;
+    this.state.isPausedForReward = false;
   }
 
   getDynamicSpawnRate() {
@@ -65,6 +82,51 @@ export class GameEngine {
     if (this.state.mode === 'CREATIVE') modeFactor = 0.5;
     
     return Math.max(800, (baseRate / (levelFactor * timeFactor)) / modeFactor);
+  }
+
+  tryConnectStations(lineIdx: number, startStation: Station, endStation: Station, city: City) {
+    if (startStation.id === endStation.id) return;
+
+    const isCreative = this.state.mode === 'CREATIVE';
+    const crossing = isSegmentCrossingWater(startStation, endStation, city);
+    
+    // Resource check for water crossings
+    if (crossing && !isCreative) {
+      const needsTunnel = lineIdx % 2 === 0;
+      if (needsTunnel && this.state.resources.tunnels <= 0) return;
+      if (!needsTunnel && this.state.resources.bridges <= 0) return;
+    }
+
+    let line = this.state.lines.find(l => l.id === lineIdx);
+
+    if (!line) {
+      // Trying to start a new line
+      if (!isCreative && this.state.resources.lines <= 0) return;
+      
+      line = { 
+        id: lineIdx, 
+        color: THEME.lineColors[lineIdx], 
+        stations: [startStation.id, endStation.id], 
+        trains: [] 
+      };
+      this.state.lines.push(line);
+      this.addTrainToLine(lineIdx);
+    } else {
+      // Extending existing line
+      if (line.stations.includes(endStation.id)) return; // No loops for now to keep it simple
+
+      if (line.stations[0] === startStation.id) {
+        line.stations.unshift(endStation.id);
+      } else if (line.stations[line.stations.length - 1] === startStation.id) {
+        line.stations.push(endStation.id);
+      } else {
+        return; // Can only extend from ends
+      }
+    }
+
+    // After mutation, run audit to balance available resources automatically
+    InventoryManager.validateInventory(this.state, city);
+    this.refreshAllPassengerRoutes();
   }
 
   findNextLeg(currentStationId: number, targetType: StationType): { lineId: number, transferStationId: number } | null {
@@ -272,7 +334,7 @@ export class GameEngine {
   }
 
   spawnStation(width: number, height: number, projectFn: any) {
-    if (!this.state.gameActive || !this.state.autoSpawn) return;
+    if (!this.state.gameActive || !this.state.autoSpawn || this.state.isPausedForReward) return;
     const city = CITIES.find(c => c.id === this.state.cityId) || CITIES[0];
     const allTypes: StationType[] = ['circle', 'triangle', 'square', 'pentagon', 'star'];
     const typePoolCount = Math.min(allTypes.length, 2 + Math.floor(this.state.level / 2));
@@ -309,50 +371,24 @@ export class GameEngine {
     });
   }
 
-  /**
-   * Helper to reclaim tunnel/bridge resources for a specific segment
-   */
-  reclaimSegment(lineId: number, s1Id: number, s2Id: number) {
-    if (this.state.mode === 'CREATIVE') return;
-    const s1 = this.state.stations.find(s => s.id === s1Id);
-    const s2 = this.state.stations.find(s => s.id === s2Id);
-    const city = CITIES.find(c => c.id === this.state.cityId) || CITIES[0];
-    
-    if (s1 && s2 && isSegmentCrossingWater(s1, s2, city)) {
-      if (lineId % 2 === 0) {
-        this.state.resources.tunnels++;
-      } else {
-        this.state.resources.bridges++;
-      }
-    }
-  }
-
   removeStation(id: number) {
     const sIdx = this.state.stations.findIndex(s => s.id === id);
     if (sIdx === -1) return;
+    const city = CITIES.find(c => c.id === this.state.cityId) || CITIES[0];
 
-    // Cleanup lines that include this station
-    // CRITICAL: Reclaim segments connected to this station BEFORE splicing the array
     this.state.lines.forEach(line => {
       const sPos = line.stations.indexOf(id);
       if (sPos !== -1) {
-        // Reclaim segments to neighbors
-        if (sPos > 0) {
-          this.reclaimSegment(line.id, line.stations[sPos - 1], line.stations[sPos]);
-        }
-        if (sPos < line.stations.length - 1) {
-          this.reclaimSegment(line.id, line.stations[sPos], line.stations[sPos + 1]);
-        }
-
         line.stations.splice(sPos, 1);
         if (line.stations.length < 2) {
-          this.removeLine(line.id, false); // false because we just reclaimed tunnels for this station's segment
+          this.removeLine(line.id); 
         }
       }
     });
 
     this.state.stations.splice(sIdx, 1);
     this.refreshAllPassengerRoutes();
+    InventoryManager.validateInventory(this.state, city);
   }
 
   addTrainToLine(lineId: number) {
@@ -382,9 +418,6 @@ export class GameEngine {
         this.state.resources.trains++;
         this.state.resources.wagons += train.wagons;
       }
-      // Re-route passengers back to nearest station
-      const station = this.state.stations.find(s => s.id === line.stations[train.nextStationIndex]);
-      if (station) station.waitingPassengers.push(...train.passengers);
       line.trains.splice(idx, 1);
     }
   }
@@ -409,42 +442,29 @@ export class GameEngine {
     }
   }
 
-  removeLine(lineId: number, reclaimSegments = true) {
+  removeLine(lineId: number) {
     const lineIdx = this.state.lines.findIndex(l => l.id === lineId);
     if (lineIdx !== -1) {
-      const line = this.state.lines[lineIdx];
-      
-      if (this.state.mode !== 'CREATIVE') {
-        if (reclaimSegments) {
-          // Return all used tunnels/bridges for this line
-          for (let i = 0; i < line.stations.length - 1; i++) {
-            this.reclaimSegment(line.id, line.stations[i], line.stations[i + 1]);
-          }
-        }
-        this.state.resources.lines++;
-        line.trains.forEach(t => {
-          this.state.resources.trains++;
-          this.state.resources.wagons += t.wagons;
-        });
-      }
-
+      const city = CITIES.find(c => c.id === this.state.cityId) || CITIES[0];
+      InventoryManager.refundLine(this.state, this.state.lines[lineIdx], city);
       this.state.lines.splice(lineIdx, 1);
       this.refreshAllPassengerRoutes();
+      InventoryManager.validateInventory(this.state, city);
     }
   }
 
   removeSegment(lineId: number, idxA: number, idxB: number) {
     const line = this.state.lines.find(l => l.id === lineId);
     if (!line) return;
+    const city = CITIES.find(c => c.id === this.state.cityId) || CITIES[0];
     
-    // Check if the segment we're about to remove crosses water
-    this.reclaimSegment(lineId, line.stations[idxA], line.stations[idxB]);
-
+    // Manual segment removal
     line.stations.splice(idxB, 1);
     if (line.stations.length < 2) {
-      this.removeLine(lineId, false); // false to avoid double-reclaiming the segment we just did
+      this.removeLine(lineId); 
     } else {
       this.refreshAllPassengerRoutes();
+      InventoryManager.validateInventory(this.state, city);
     }
   }
 }

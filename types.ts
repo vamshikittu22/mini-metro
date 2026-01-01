@@ -40,6 +40,19 @@ export interface Train {
   wagons: number;
 }
 
+export interface RewardChoice {
+  id: string;
+  label: string;
+  description: string;
+  bonus: {
+    lines?: number;
+    trains?: number;
+    tunnels?: number;
+    bridges?: number;
+    wagons?: number;
+  };
+}
+
 export interface City {
   id: string;
   name: string;
@@ -53,7 +66,7 @@ export interface City {
   };
   water: { lat: number; lon: number }[][];
   initialStations: { id: number; type: StationType; lat: number; lon: number; name: string }[];
-  difficulty: number; // Spawn rate multiplier
+  difficulty: number;
 }
 
 export interface GameState {
@@ -64,12 +77,14 @@ export interface GameState {
   score: number;
   level: number;
   gameActive: boolean;
-  autoSpawn: boolean; // Simulation toggle
-  dayNightAuto: boolean; // Auto cycle toggle
-  isNightManual: boolean; // Manual toggle
+  autoSpawn: boolean;
+  dayNightAuto: boolean;
+  isNightManual: boolean;
   timeScale: number;
   daysElapsed: number;
   nextRewardIn: number;
+  
+  // Available for placement
   resources: {
     lines: number;
     trains: number;
@@ -77,6 +92,24 @@ export interface GameState {
     bridges: number;
     wagons: number;
   };
+
+  // Invariants (Initial + Rewards)
+  totalResources: {
+    lines: number;
+    trains: number;
+    tunnels: number;
+    bridges: number;
+    wagons: number;
+  };
+
+  weeklyAuditLog: { 
+    week: number; 
+    choice: string; 
+    snapshot: Record<string, number>;
+  }[];
+  
+  pendingRewardOptions?: [RewardChoice, RewardChoice];
+  isPausedForReward: boolean;
 }
 
 export const CITIES: City[] = [
@@ -151,109 +184,6 @@ export const CITIES: City[] = [
       { id: 10, type: 'square', lat: 35.6812, lon: 139.7671, name: "Tokyo" },
       { id: 11, type: 'circle', lat: 35.6895, lon: 139.6917, name: "Shinjuku" },
       { id: 12, type: 'triangle', lat: 35.6581, lon: 139.7016, name: "Shibuya" }
-    ]
-  },
-  {
-    id: 'berlin',
-    name: 'Berlin',
-    color: '#D7191C',
-    center: { lat: 52.52, lon: 13.405 },
-    difficulty: 0.95,
-    bounds: { minLat: 52.45, maxLat: 52.58, minLon: 13.25, maxLon: 13.55 },
-    water: [[
-      { lat: 52.53, lon: 13.20 }, { lat: 52.52, lon: 13.30 }, { lat: 52.51, lon: 13.40 }, 
-      { lat: 52.50, lon: 13.45 }, { lat: 52.48, lon: 13.55 }, { lat: 52.47, lon: 13.55 }, 
-      { lat: 52.49, lon: 13.45 }, { lat: 52.50, lon: 13.40 }, { lat: 52.51, lon: 13.30 }, { lat: 52.52, lon: 13.20 }
-    ]],
-    initialStations: [
-      { id: 13, type: 'circle', lat: 52.52, lon: 13.405, name: "Alexanderplatz" },
-      { id: 14, type: 'square', lat: 52.506, lon: 13.332, name: "Zoo Garden" },
-      { id: 15, type: 'triangle', lat: 52.525, lon: 13.369, name: "Hauptbahnhof" }
-    ]
-  },
-  {
-    id: 'singapore',
-    name: 'Singapore',
-    color: '#00A650',
-    center: { lat: 1.3521, lon: 103.8198 },
-    difficulty: 1.3,
-    bounds: { minLat: 1.22, maxLat: 1.48, minLon: 103.60, maxLon: 104.05 },
-    water: [[
-      { lat: 1.25, lon: 103.60 }, { lat: 1.22, lon: 103.85 }, { lat: 1.28, lon: 104.05 }, 
-      { lat: 1.45, lon: 104.05 }, { lat: 1.48, lon: 103.80 }, { lat: 1.45, lon: 103.60 }
-    ]],
-    initialStations: [
-      { id: 16, type: 'square', lat: 1.284, lon: 103.851, name: "Raffles Place" },
-      { id: 17, type: 'circle', lat: 1.300, lon: 103.854, name: "Bugis" },
-      { id: 18, type: 'triangle', lat: 1.304, lon: 103.832, name: "Orchard" }
-    ]
-  },
-  {
-    id: 'sf',
-    name: 'San Francisco',
-    color: '#F98E1D',
-    center: { lat: 37.7749, lon: -122.4194 },
-    difficulty: 1.5,
-    bounds: { minLat: 37.65, maxLat: 37.85, minLon: -122.55, maxLon: -122.30 },
-    water: [[
-      { lat: 37.85, lon: -122.55 }, { lat: 37.85, lon: -122.40 }, { lat: 37.75, lon: -122.30 }, 
-      { lat: 37.65, lon: -122.30 }, { lat: 37.65, lon: -122.55 }
-    ]],
-    initialStations: [
-      { id: 19, type: 'square', lat: 37.788, lon: -122.401, name: "Montgomery" },
-      { id: 20, type: 'circle', lat: 37.764, lon: -122.419, name: "Mission St" },
-      { id: 21, type: 'triangle', lat: 37.775, lon: -122.446, name: "Panhandle" }
-    ]
-  },
-  {
-    id: 'seoul',
-    name: 'Seoul',
-    color: '#0072CE',
-    center: { lat: 37.5665, lon: 126.978 },
-    difficulty: 1.2,
-    bounds: { minLat: 37.45, maxLat: 37.65, minLon: 126.80, maxLon: 127.20 },
-    water: [[
-      { lat: 37.55, lon: 126.70 }, { lat: 37.53, lon: 126.90 }, { lat: 37.52, lon: 127.10 }, 
-      { lat: 37.50, lon: 127.30 }, { lat: 37.48, lon: 127.30 }, { lat: 37.51, lon: 127.05 }, { lat: 37.52, lon: 126.80 }
-    ]],
-    initialStations: [
-      { id: 22, type: 'square', lat: 37.561, lon: 126.982, name: "Myeong-dong" },
-      { id: 23, type: 'circle', lat: 37.529, lon: 127.027, name: "Apgujeong" },
-      { id: 24, type: 'triangle', lat: 37.512, lon: 127.102, name: "Jamsil" }
-    ]
-  },
-  {
-    id: 'sydney',
-    name: 'Sydney',
-    color: '#FF6F00',
-    center: { lat: -33.8688, lon: 151.2093 },
-    difficulty: 1.15,
-    bounds: { minLat: -33.95, maxLat: -33.75, minLon: 151.05, maxLon: 151.35 },
-    water: [[
-      { lat: -33.75, lon: 151.25 }, { lat: -33.85, lon: 151.22 }, { lat: -33.85, lon: 151.35 }, 
-      { lat: -33.95, lon: 151.35 }, { lat: -33.95, lon: 151.05 }, { lat: -33.85, lon: 151.05 }
-    ]],
-    initialStations: [
-      { id: 25, type: 'square', lat: -33.867, lon: 151.207, name: "Town Hall" },
-      { id: 26, type: 'circle', lat: -33.852, lon: 151.211, name: "Circular Quay" },
-      { id: 27, type: 'triangle', lat: -33.882, lon: 151.201, name: "Central" }
-    ]
-  },
-  {
-    id: 'hk',
-    name: 'Hong Kong',
-    color: '#8E24AA',
-    center: { lat: 22.3193, lon: 114.1694 },
-    difficulty: 1.45,
-    bounds: { minLat: 22.20, maxLat: 22.45, minLon: 114.00, maxLon: 114.30 },
-    water: [[
-      { lat: 22.28, lon: 114.00 }, { lat: 22.29, lon: 114.15 }, { lat: 22.28, lon: 114.30 }, 
-      { lat: 22.20, lon: 114.30 }, { lat: 22.20, lon: 114.00 }
-    ]],
-    initialStations: [
-      { id: 28, type: 'square', lat: 22.282, lon: 114.158, name: "Central" },
-      { id: 29, type: 'circle', lat: 22.297, lon: 114.172, name: "Tsim Sha Tsui" },
-      { id: 30, type: 'triangle', lat: 22.336, lon: 114.149, name: "Sham Shui Po" }
     ]
   }
 ];
