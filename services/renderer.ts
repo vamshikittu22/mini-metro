@@ -1,4 +1,3 @@
-
 import { GameState, Station, TransitLine, City, Point, StationType } from '../types';
 import { THEME, GAME_CONFIG } from '../constants';
 import { getBentPath, getDistance, isSegmentCrossingWater, project } from './geometry';
@@ -18,6 +17,7 @@ export class Renderer {
     const { ctx } = this;
     const { stations, lines, scoreAnimations } = state;
 
+    // Swiss-style background
     ctx.fillStyle = THEME.background;
     ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
@@ -25,16 +25,22 @@ export class Renderer {
     ctx.translate(camera.x, camera.y);
     ctx.scale(camera.scale, camera.scale);
 
-    // Grid
+    // Grid System
     ctx.strokeStyle = THEME.grid;
     ctx.lineWidth = 1;
-    for (let x = -3000; x < 6000; x += 100) { ctx.beginPath(); ctx.moveTo(x, -3000); ctx.lineTo(x, 6000); ctx.stroke(); }
-    for (let y = -3000; y < 6000; y += 100) { ctx.beginPath(); ctx.moveTo(-3000, y); ctx.lineTo(6000, y); ctx.stroke(); }
+    const gridSize = 100;
+    const gridBound = 6000;
+    for (let x = -gridBound/2; x < gridBound; x += gridSize) { ctx.beginPath(); ctx.moveTo(x, -gridBound/2); ctx.lineTo(x, gridBound); ctx.stroke(); }
+    for (let y = -gridBound/2; y < gridBound; y += gridSize) { ctx.beginPath(); ctx.moveTo(-gridBound/2, y); ctx.lineTo(gridBound, y); ctx.stroke(); }
 
-    // Water
+    // Water Rendering - Enhanced for "Real Map" Look
     const time = Date.now() / 1000;
     ctx.fillStyle = THEME.water;
+    ctx.strokeStyle = '#BDD1E0'; // Shoreline color
+    ctx.lineWidth = 2 / camera.scale;
+    
     currentCity.water.forEach(poly => {
+      if (poly.length < 2) return;
       ctx.beginPath();
       const p0 = project(poly[0].lat, poly[0].lon, currentCity);
       ctx.moveTo(p0.x, p0.y);
@@ -42,19 +48,25 @@ export class Renderer {
         const p = project(pt.lat, pt.lon, currentCity);
         ctx.lineTo(p.x, p.y);
       });
+      ctx.closePath();
       ctx.fill();
+      ctx.stroke();
 
-      // Ripples
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
-      ctx.lineWidth = 2;
+      // Gentle Water Motion (Subtle Ripples)
+      ctx.save();
+      ctx.globalAlpha = 0.2;
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+      ctx.lineWidth = 1 / camera.scale;
       ctx.beginPath();
       poly.forEach((pt, i) => {
         const p = project(pt.lat, pt.lon, currentCity);
-        const shift = Math.sin(time + i) * 5;
+        // Animate shoreline ripple
+        const shift = Math.sin(time + i * 0.5) * (4 / camera.scale);
         if (i === 0) ctx.moveTo(p.x + shift, p.y + shift);
         else ctx.lineTo(p.x + shift, p.y + shift);
       });
       ctx.stroke();
+      ctx.restore();
     });
 
     const zoomComp = 1 / Math.pow(camera.scale, 0.8);
@@ -81,6 +93,7 @@ export class Renderer {
             for (let j = 1; j < path.length; j++) ctx.lineTo(path[j].x, path[j].y);
             ctx.stroke();
 
+            // Internal tunnel dashes
             ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
             ctx.lineWidth = 1.5 * zoomComp;
             const step = 15 * zoomComp;
@@ -101,6 +114,7 @@ export class Renderer {
             }
             ctx.restore();
           } else {
+            // Bridge
             ctx.save();
             ctx.strokeStyle = '#222';
             ctx.lineWidth = dynamicLineWidth + (14 * zoomComp);

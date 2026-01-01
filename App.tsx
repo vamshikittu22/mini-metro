@@ -233,11 +233,11 @@ const App: React.FC = () => {
         <>
           <div className="absolute top-8 left-8 z-50 pointer-events-auto flex flex-col gap-1">
             <div className="flex items-center gap-3">
-              <h1 className="text-4xl font-black uppercase tracking-tighter text-[#1A1A1A]">{currentCity?.name}</h1>
+              <h1 className="text-4xl font-black uppercase tracking-tighter text-black">{currentCity?.name}</h1>
               <div className="bg-black text-white px-2 py-0.5 text-[10px] font-black uppercase rounded-sm">Week {uiState.level}</div>
             </div>
-            <p className="text-[10px] font-bold uppercase opacity-40 tracking-[0.3em] text-[#1A1A1A]">{DAYS[Math.floor(uiState.daysElapsed % 7)]}</p>
-            <button onClick={() => setView('CITY_SELECT')} className="text-[9px] font-black uppercase tracking-widest opacity-30 hover:opacity-100 mt-4 text-[#1A1A1A]">← System Select</button>
+            <p className="text-[10px] font-bold uppercase opacity-40 tracking-[0.3em] text-black">{DAYS[Math.floor(uiState.daysElapsed % 7)]}</p>
+            <button onClick={() => setView('CITY_SELECT')} className="text-[9px] font-black uppercase tracking-widest opacity-30 hover:opacity-100 mt-4 text-black text-left">← System Select</button>
           </div>
 
           <Stats score={uiState.score} timeScale={uiState.timeScale} onSpeedChange={(s) => { if(engineRef.current) engineRef.current.state.timeScale = s; syncStateImmediate(); }} />
@@ -299,36 +299,36 @@ const App: React.FC = () => {
       />
 
       <div className="fixed bottom-32 left-8 z-50 flex flex-col gap-2">
-        <button onClick={() => setShowStrategist(!showStrategist)} className="bg-black text-white p-3 rounded-full shadow-lg hover:scale-110 transition-transform flex items-center justify-center" title="AI Strategist"><span className="text-xl">🧠</span></button>
+        <button onClick={() => setShowStrategist(!showStrategist)} className="bg-black text-white w-12 h-12 flex items-center justify-center shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:translate-x-1 hover:translate-y-1 hover:shadow-none transition-all" title="AI Strategist"><span className="text-xl">🧠</span></button>
       </div>
 
       {showStrategist && uiState && <Strategist gameState={uiState} onClose={() => setShowStrategist(false)} />}
       
       {showAudit && uiState && (
-        <div className="fixed bottom-32 left-8 z-[100] bg-white p-8 border-2 border-black shadow-2xl min-w-[300px] rounded-sm">
-           <h4 className="text-xs font-black uppercase mb-4">System Audit & Integrity</h4>
-           <div className="mb-4 p-2 bg-black/5 text-[8px] font-mono leading-tight">
-             SYSTEM STATUS: {SystemValidator.validateSystemState(uiState, currentCity!) ? 'OPTIMAL' : 'RECALCULATING'} <br/>
+        <div className="fixed bottom-32 left-8 z-[100] bg-white p-6 border-2 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] min-w-[300px]">
+           <h4 className="text-[10px] font-black uppercase mb-4 tracking-widest border-b border-black pb-2">System Audit & Integrity</h4>
+           <div className="mb-4 p-2 bg-black/5 text-[9px] font-mono leading-tight border border-black/10">
+             STATUS: {SystemValidator.validateSystemState(uiState, currentCity!) ? 'OPTIMAL' : 'ADJUSTING'} <br/>
              VERIFICATION CYCLE: 5.0s
            </div>
            {Object.entries(uiState.totalResources).map(([k, v]) => (
-             <div key={k} className="flex justify-between py-1 text-[10px] font-bold uppercase">
+             <div key={k} className="flex justify-between py-1.5 text-[10px] font-black uppercase border-b border-black/5 last:border-0">
                <span className="opacity-40">{k}</span>
-               <span>{uiState.resources[k as keyof typeof uiState.resources]} / {v}</span>
+               <span className="tabular-nums">{uiState.resources[k as keyof typeof uiState.resources]} / {v}</span>
              </div>
            ))}
         </div>
       )}
 
       {uiState?.isPausedForReward && uiState?.pendingRewardOptions && (
-        <div className="fixed inset-0 z-[400] flex items-center justify-center bg-black/40 backdrop-blur-sm">
-          <div className="bg-white p-12 max-w-2xl w-full border-4 border-black shadow-2xl">
-            <h2 className="text-4xl font-black uppercase tracking-tighter mb-12">System Upgrade</h2>
-            <div className="grid grid-cols-2 gap-6">
+        <div className="fixed inset-0 z-[400] flex items-center justify-center bg-white/20 backdrop-blur-sm">
+          <div className="bg-white p-12 max-w-2xl w-full border-4 border-black shadow-[16px_16px_0px_0px_rgba(0,0,0,1)] animate-in zoom-in-95">
+            <h2 className="text-4xl font-black uppercase tracking-tighter mb-12 border-b-4 border-black pb-4">System Expansion</h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
               {uiState.pendingRewardOptions.map(choice => (
-                <button key={choice.id} onClick={() => { engineRef.current?.selectReward(choice); syncStateImmediate(); }} className="flex flex-col items-center p-8 bg-black text-white hover:bg-blue-600 transition-colors">
-                  <span className="text-[10px] font-black uppercase opacity-60 mb-2">{choice.label}</span>
-                  <span className="text-xl font-black uppercase">{choice.description}</span>
+                <button key={choice.id} onClick={() => { engineRef.current?.selectReward(choice); syncStateImmediate(); }} className="group flex flex-col items-center p-8 bg-white border-4 border-black hover:bg-black hover:text-white transition-all shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] hover:shadow-none hover:translate-x-2 hover:translate-y-2">
+                  <span className="text-[10px] font-black uppercase opacity-60 mb-2 group-hover:opacity-100">{choice.label}</span>
+                  <span className="text-xl font-black uppercase text-center leading-tight">{choice.description}</span>
                 </button>
               ))}
             </div>
