@@ -1,3 +1,4 @@
+
 export const THEME = {
   background: '#F8F4EE', // Warm Swiss-style off-white
   water: '#D8E2EB',      // Desaturated subtle water blue
@@ -46,3 +47,26 @@ export const LONDON_STATIONS = [
   "Elephant & Castle", "Farringdon", "Holborn", "Mansion House", 
   "Notting Hill Gate", "Shepherd's Bush", "Vauxhall", "White City"
 ];
+
+export const CITY_STATION_POOLS: Record<string, string[]> = {
+  london: LONDON_STATIONS,
+  paris: ["Châtelet", "Gare du Nord", "Montparnasse", "Bastille", "République", "Opéra", "Étoile", "Louvre", "Pigalle", "Saint-Lazare"],
+  nyc: ["Grand Central", "Penn Station", "Times Square", "Wall Street", "Fulton St", "Canal St", "Union Sq", "Atlantic Av", "Columbus Circle", "World Trade Center"],
+  tokyo: ["Shinjuku", "Shibuya", "Tokyo", "Ueno", "Ikebukuro", "Shinagawa", "Akihabara", "Ginza", "Roppongi", "Asakusa"],
+  berlin: ["Hauptbahnhof", "Alexanderplatz", "Zoologischer Garten", "Friedrichstraße", "Potsdamer Platz", "Gesundbrunnen", "Ostkreuz", "Südkreuz", "Warschauer Straße"],
+  seoul: ["Seoul Station", "Gangnam", "Myeongdong", "Hongdae", "Itaewon", "Dongdaemun", "Sinchon", "Jamsil", "Yeouido"],
+  sydney: ["Town Hall", "Circular Quay", "Central", "Wynyard", "Bondi Junction", "Parramatta", "Chatswood", "North Sydney"],
+  mumbai: ["CSMT", "Churchgate", "Dadar", "Andheri", "Bandra", "Kurla", "Borivali", "Thane", "Panvel"],
+  cairo: ["Tahrir", "Ramses", "Giza", "Heliopolis", "Maadi", "Zamalek", "Dokki", "Nasr City"],
+  rio: ["Centro", "Ipanema", "Copacabana", "Botafogo", "Tijuca", "Maracanã", "Barra", "Lapa"],
+  moscow: ["Kremlin", "Arbat", "Tverskaya", "Lubyanka", "Taganskaya", "Kievskaya", "Kurskaya", "Belorusskaya"],
+  beijing: ["Tiananmen", "Wangfujing", "Sanlitun", "Xidan", "Huilongguan", "Dongzhimen", "Guomao", "Zhongguancun"],
+  toronto: ["Union", "Bloor-Yonge", "St George", "Spadina", "Eglinton", "Sheppard", "Finch", "Dundas", "King"],
+  barcelona: ["Catalunya", "Sants", "Passeig de Gràcia", "Diagonal", "Sagrada Família", "Espanya", "Les Corts", "Gràcia"],
+  amsterdam: ["Centraal", "Zuid", "Amstel", "Sloterdijk", "Muiderpoort", "Lelylaan", "Bijlmer", "Noord"],
+  rome: ["Termini", "Tiburtina", "Ostiense", "Flaminio", "Colosseo", "Ottaviano", "Garbatella", "Trastevere"],
+  istanbul: ["Sultanahmet", "Taksim", "Kadikoy", "Besiktas", "Üsküdar", "Levent", "Sisli", "Bakirköy"],
+  stockholm: ["T-Centralen", "Slussen", "Gamla Stan", "Odenplan", "Fridhemsplan", "Gullmarsplan", "Tekniska"],
+  mexico: ["Zócalo", "Condesa", "Polanco", "Tlatelolco", "Insurgentes", "Chapultepec", "Coyoacán", "Hidalgo"],
+  singapore: ["Raffles Place", "Orchard", "Bishan", "Jurong East", "Tampines", "Dhoby Ghaut", "Novena", "Serangoon"]
+};

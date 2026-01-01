@@ -2,7 +2,7 @@
 import { 
   GameState, Station, TransitLine, Train, Passenger, StationType, CITIES, City, RewardChoice, ScoreAnimation 
 } from '../types';
-import { GAME_CONFIG, THEME, LONDON_STATIONS } from '../constants';
+import { GAME_CONFIG, THEME, CITY_STATION_POOLS } from '../constants';
 import { getDistance, isSegmentCrossingWater, project } from './geometry';
 import { InventoryManager } from './inventoryManager';
 import { SystemValidator } from './validation';
@@ -22,6 +22,7 @@ export class GameEngine {
       scoreAnimations: []
     };
     this.state.nextRewardIn = 60000 * 7; 
+    this.usedNames = new Set();
     this.state.stations.forEach(s => this.usedNames.add(s.name));
   }
 
@@ -116,17 +117,27 @@ export class GameEngine {
   tryConnectStations(lineIdx: number, startStation: Station, endStation: Station, city: City) {
     if (startStation.id === endStation.id) return lineIdx;
     const isCreative = this.state.mode === 'CREATIVE';
-    
+
+    // 1. Determine target line
     let line = this.state.lines.find(l => l.stations[0] === startStation.id || l.stations[l.stations.length - 1] === startStation.id);
-    if (line) lineIdx = line.id;
+    let targetLineId = line ? line.id : -1;
+    if (targetLineId === -1) {
+      const usedIds = new Set(this.state.lines.map(l => l.id));
+      for(let i=0; i<10; i++) { if(!usedIds.has(i)) { targetLineId = i; break; } }
+    }
+
+    // 2. Pre-check resource constraints
+    const crossesWater = isSegmentCrossingWater(startStation, endStation, city);
+    if (crossesWater && !isCreative) {
+      const isTunnelLine = targetLineId % 2 === 0;
+      const resourceAvailable = isTunnelLine ? this.state.resources.tunnels : this.state.resources.bridges;
+      if (resourceAvailable <= 0) return lineIdx;
+    }
 
     if (!line) {
       if (this.state.resources.lines > 0 || isCreative) {
-        const usedIds = new Set(this.state.lines.map(l => l.id));
-        let nextId = -1;
-        for(let i=0; i<10; i++) { if(!usedIds.has(i)) { nextId = i; break; } }
-        if (nextId !== -1) {
-          lineIdx = nextId;
+        if (targetLineId !== -1) {
+          lineIdx = targetLineId;
           line = { id: lineIdx, color: THEME.lineColors[lineIdx], stations: [startStation.id, endStation.id], trains: [] };
           this.state.lines.push(line);
           this.addTrainToLine(lineIdx);
@@ -136,6 +147,7 @@ export class GameEngine {
       const alreadyContainsEnd = line.stations.includes(endStation.id);
       const isClosingLoop = (line.stations[0] === startStation.id && line.stations[line.stations.length - 1] === endStation.id) ||
                             (line.stations[line.stations.length - 1] === startStation.id && line.stations[0] === endStation.id);
+      
       const uniqueCount = new Set(line.stations).size;
       if (isClosingLoop && uniqueCount < 3) return lineIdx;
       if (alreadyContainsEnd && !isClosingLoop) return lineIdx; 
@@ -146,7 +158,9 @@ export class GameEngine {
       } else if (line.stations[line.stations.length - 1] === startStation.id) {
         line.stations.push(endStation.id);
       }
+      lineIdx = line.id;
     }
+
     InventoryManager.validateInventory(this.state, city);
     this.refreshAllPassengerRoutes();
     return lineIdx;
@@ -161,29 +175,47 @@ export class GameEngine {
 
     const city = CITIES.find(c => c.id === this.state.cityId) || CITIES[0];
     const firstIdx = Math.min(idxA, idxB);
+    
     const head = line.stations.slice(0, firstIdx + 1);
     const tail = line.stations.slice(firstIdx + 1);
 
-    if (head.length < 2) {
+    if (firstIdx === 0) {
       line.stations = tail;
       line.trains.forEach(t => t.nextStationIndex = Math.max(0, t.nextStationIndex - 1));
-    } else if (tail.length < 2) {
+    } else if (firstIdx === line.stations.length - 2) {
       line.stations = head;
+      line.trains.forEach(t => {
+        if (t.nextStationIndex >= line.stations.length) t.nextStationIndex = line.stations.length - 1;
+      });
     } else {
-      // Split Logic
-      line.stations = head;
+      // Split Logic: Check if player has line inventory
       if (this.state.resources.lines > 0 || this.state.mode === 'CREATIVE') {
+        line.stations = head;
         const usedIds = new Set(this.state.lines.map(l => l.id));
         let nextId = -1;
         for(let i=0; i<10; i++) { if(!usedIds.has(i)) { nextId = i; break; } }
+        
         if (nextId !== -1) {
-          this.state.lines.push({ id: nextId, color: THEME.lineColors[nextId], stations: tail, trains: [] });
+          const newLine: TransitLine = { 
+            id: nextId, 
+            color: THEME.lineColors[nextId], 
+            stations: tail, 
+            trains: [] 
+          };
+          this.state.lines.push(newLine);
           this.addTrainToLine(nextId);
         }
+      } else {
+        // Enforce pruning: If no lines available, user can't split, only shorten from head
+        // Alternatively, Mini Metro allows removal but the tail is lost
+        line.stations = head;
       }
     }
 
-    if (line.stations.length < 2) this.removeLine(lineId);
+    if (line.stations.length < 2) {
+      this.removeLine(lineId);
+    }
+    
     InventoryManager.validateInventory(this.state, city);
     this.refreshAllPassengerRoutes();
   }
@@ -242,7 +274,7 @@ export class GameEngine {
     train.passengers = train.passengers.filter(p => {
       if (p.targetType === station.type) {
         this.state.score++;
-        this.state.scoreAnimations.push({ id: Math.random(), x: station.x, y: station.y, startTime: performance.now() });
+        this.state.scoreAnimations.push({ id: Math.random(), x: station.x, y: station.y, startTime: Date.now() });
         return false;
       }
       if (station.id === p.nextTransferStationId) { station.waitingPassengers.push(p); return false; }
@@ -281,11 +313,32 @@ export class GameEngine {
   }
 
   private getUniqueName(): string {
-    const pool = LONDON_STATIONS;
-    let candidate = pool[Math.floor(Math.random() * pool.length)];
-    while(this.usedNames.has(candidate)) candidate += " "+(Math.floor(Math.random()*9));
+    const pool = CITY_STATION_POOLS[this.state.cityId] || CITY_STATION_POOLS['london'];
+    let baseCandidate = pool[Math.floor(Math.random() * pool.length)];
+    let candidate = baseCandidate;
+    let suffix = 1;
+    
+    while (this.usedNames.has(candidate)) {
+      suffix++;
+      candidate = `${baseCandidate} ${this.toRoman(suffix)}`;
+      if (suffix > 100) break; 
+    }
+    
     this.usedNames.add(candidate);
     return candidate;
+  }
+
+  private toRoman(num: number): string {
+    if (num === 1) return "";
+    const lookup: Record<string, number> = {M:1000,CM:900,D:500,CD:400,C:100,XC:90,L:50,XL:40,X:10,IX:9,V:5,IV:4,I:1};
+    let roman = '';
+    for (let i in lookup) {
+      while (num >= lookup[i]) {
+        roman += i;
+        num -= lookup[i];
+      }
+    }
+    return ` ${roman}`;
   }
 
   spawnPassenger() {
@@ -315,7 +368,15 @@ export class GameEngine {
       const lon = city.bounds.minLon + Math.random() * (city.bounds.maxLon - city.bounds.minLon);
       const pos = projectFn(lat, lon, city);
       if (this.state.stations.every(s => getDistance(s, pos) > 120)) {
-        this.state.stations.push({ id: this.stationIdCounter++, type: types[Math.floor(Math.random()*types.length)], name: this.getUniqueName(), x: pos.x, y: pos.y, waitingPassengers: [], timer: 0 });
+        this.state.stations.push({ 
+          id: this.stationIdCounter++, 
+          type: types[Math.floor(Math.random()*types.length)], 
+          name: this.getUniqueName(), 
+          x: pos.x, 
+          y: pos.y, 
+          waitingPassengers: [], 
+          timer: 0 
+        });
         break;
       }
     }
@@ -324,8 +385,18 @@ export class GameEngine {
   addTrainToLine(lineId: number) {
     const line = this.state.lines.find(l => l.id === lineId);
     if (line && (this.state.resources.trains > 0 || this.state.mode === 'CREATIVE')) {
-      line.trains.push({ id: Math.random(), lineId, nextStationIndex: 1, progress: 0, direction: 1, passengers: [], capacity: GAME_CONFIG.trainCapacity, wagons: 0 });
-      if (this.state.mode !== 'CREATIVE') this.state.resources.trains--;
+      line.trains.push({ 
+        id: Math.random(), 
+        lineId, 
+        nextStationIndex: 1, 
+        progress: 0, 
+        direction: 1, 
+        passengers: [], 
+        capacity: GAME_CONFIG.trainCapacity, 
+        wagons: 0 
+      });
+      const city = CITIES.find(c => c.id === this.state.cityId) || CITIES[0];
+      InventoryManager.validateInventory(this.state, city);
     }
   }
 
@@ -334,9 +405,9 @@ export class GameEngine {
     if (!line) return;
     const idx = line.trains.findIndex(t => t.id === trainId);
     if (idx !== -1) {
-      const train = line.trains[idx];
-      if (this.state.mode !== 'CREATIVE') { this.state.resources.trains++; this.state.resources.wagons += train.wagons; }
       line.trains.splice(idx, 1);
+      const city = CITIES.find(c => c.id === this.state.cityId) || CITIES[0];
+      InventoryManager.validateInventory(this.state, city);
     }
   }
 
@@ -346,7 +417,8 @@ export class GameEngine {
     const train = line.trains.find(t => t.id === trainId);
     if (train && (this.state.resources.wagons > 0 || this.state.mode === 'CREATIVE')) {
       train.wagons++;
-      if (this.state.mode !== 'CREATIVE') this.state.resources.wagons--;
+      const city = CITIES.find(c => c.id === this.state.cityId) || CITIES[0];
+      InventoryManager.validateInventory(this.state, city);
     }
   }
 
@@ -356,17 +428,17 @@ export class GameEngine {
     const train = line.trains.find(t => t.id === trainId);
     if (train && train.wagons > 0) {
       train.wagons--;
-      if (this.state.mode !== 'CREATIVE') this.state.resources.wagons++;
+      const city = CITIES.find(c => c.id === this.state.cityId) || CITIES[0];
+      InventoryManager.validateInventory(this.state, city);
     }
   }
 
   removeLine(lineId: number) {
     const idx = this.state.lines.findIndex(l => l.id === lineId);
     if (idx !== -1) {
-      const line = this.state.lines[idx];
-      line.trains.forEach(t => this.removeTrainFromLine(lineId, t.id));
       this.state.lines.splice(idx, 1);
-      this.state.resources.lines++;
+      const city = CITIES.find(c => c.id === this.state.cityId) || CITIES[0];
+      InventoryManager.validateInventory(this.state, city);
       this.refreshAllPassengerRoutes();
     }
   }

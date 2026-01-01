@@ -1,4 +1,3 @@
-
 export type StationType = 'circle' | 'square' | 'triangle' | 'pentagon' | 'star';
 export type GameMode = 'NORMAL' | 'EXTREME' | 'ENDLESS' | 'CREATIVE';
 
