@@ -62,7 +62,8 @@ export class SystemValidator {
 
     for (let i = 0; i < iterations; i++) {
       const startStation = state.stations[Math.floor(Math.random() * state.stations.length)];
-      const targetType = stationTypes[Math.floor(Math.random() * stationTypes.length)];
+      // Fix: Added explicit type cast to ensure targetType is treated as StationType
+      const targetType = stationTypes[Math.floor(Math.random() * stationTypes.length)] as StationType;
       
       // Skip if start station is already the target type
       if (startStation.type === targetType) {
