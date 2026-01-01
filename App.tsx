@@ -48,8 +48,8 @@ const App: React.FC = () => {
   const handleWheel = (e: React.WheelEvent) => {
     if (view !== 'GAME') return;
     const zoomIn = e.deltaY < 0;
-    const factor = zoomIn ? 1.1 : 0.9;
-    const newScale = Math.max(0.1, Math.min(5, camera.scale * factor));
+    const factor = zoomIn ? 1.15 : 0.85;
+    const newScale = Math.max(0.05, Math.min(10, camera.scale * factor));
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return;
     const mx = e.clientX - rect.left;
@@ -78,12 +78,11 @@ const App: React.FC = () => {
     engineRef.current = engine;
     setGameState({ ...engine.state });
     
-    // Auto-center camera
     const minX = Math.min(...initialStations.map(s => s.x));
     const maxX = Math.max(...initialStations.map(s => s.x));
     const minY = Math.min(...initialStations.map(s => s.y));
     const maxY = Math.max(...initialStations.map(s => s.y));
-    const initialScale = Math.min(0.8, (window.innerWidth * 0.7) / (maxX - minX || 1));
+    const initialScale = Math.min(0.6, (window.innerWidth * 0.7) / (maxX - minX || 1));
     setCamera({ x: window.innerWidth / 2 - ((minX + maxX) / 2) * initialScale, y: window.innerHeight / 2 - ((minY + maxY) / 2) * initialScale, scale: initialScale });
     setView('GAME');
   };
@@ -167,31 +166,47 @@ const App: React.FC = () => {
     ctx.translate(camera.x, camera.y);
     ctx.scale(camera.scale, camera.scale);
 
-    // Grid - Subtle Swiss style
+    // Grid
     ctx.strokeStyle = THEME.grid;
     ctx.lineWidth = 1;
-    for (let x = -2000; x < 5000; x += 100) { ctx.beginPath(); ctx.moveTo(x, -2000); ctx.lineTo(x, 5000); ctx.stroke(); }
-    for (let y = -2000; y < 5000; y += 100) { ctx.beginPath(); ctx.moveTo(-2000, y); ctx.lineTo(5000, y); ctx.stroke(); }
+    for (let x = -3000; x < 6000; x += 100) { ctx.beginPath(); ctx.moveTo(x, -3000); ctx.lineTo(x, 6000); ctx.stroke(); }
+    for (let y = -3000; y < 6000; y += 100) { ctx.beginPath(); ctx.moveTo(-3000, y); ctx.lineTo(6000, y); ctx.stroke(); }
 
-    // Water - Subtle Blue/Grey with Waves
-    const waveOffset = Math.sin(Date.now() / 1000) * 5;
+    // Water - Enhanced with ripples and reflections
+    const time = Date.now() / 1000;
+    const waveOffset = Math.sin(time) * 10;
     ctx.fillStyle = THEME.water;
     currentCity.water.forEach(poly => {
       ctx.beginPath();
       const p0 = project(poly[0].lat, poly[0].lon, currentCity);
-      ctx.moveTo(p0.x + waveOffset, p0.y + waveOffset);
+      ctx.moveTo(p0.x, p0.y);
       poly.forEach(pt => {
         const p = project(pt.lat, pt.lon, currentCity);
-        ctx.lineTo(p.x + waveOffset, p.y + waveOffset);
+        ctx.lineTo(p.x, p.y);
       });
       ctx.fill();
+
+      // Ripple effects
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      poly.forEach((pt, i) => {
+        const p = project(pt.lat, pt.lon, currentCity);
+        const shift = Math.sin(time + i) * 5;
+        if (i === 0) ctx.moveTo(p.x + shift, p.y + shift);
+        else ctx.lineTo(p.x + shift, p.y + shift);
+      });
+      ctx.stroke();
     });
 
-    // Zoom Scaling
-    const zoomComp = 1 / Math.pow(camera.scale, 0.6);
+    // Inverse scaling for legibility: as camera.scale decreases (zoom out), 
+    // we increase the world-size of icons so they remain visible.
+    // Factor 0.8 keeps some perspective while maintaining readability.
+    const zoomComp = 1 / Math.pow(camera.scale, 0.8);
     const dynamicStationSize = THEME.stationSize * zoomComp;
     const dynamicPassengerSize = THEME.passengerSize * zoomComp;
-    const dynamicTextSize = 12 * zoomComp;
+    const dynamicTextSize = 13 * zoomComp;
+    const dynamicLineWidth = THEME.lineWidth * Math.pow(camera.scale, 0.2); // Lines stay bold but slightly smaller when zoomed out
 
     // Tunnels/Bridges Visuals
     lines.forEach(line => {
@@ -203,65 +218,47 @@ const App: React.FC = () => {
           const isTunnel = line.id % 2 === 0;
 
           if (isTunnel) {
-            // Tunnel: Hatch style
             ctx.save();
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
-            ctx.lineWidth = THEME.lineWidth + 4;
-            ctx.beginPath();
-            ctx.moveTo(path[0].x, path[0].y);
-            for (let j = 1; j < path.length; j++) ctx.lineTo(path[j].x, path[j].y);
-            ctx.stroke();
-            
-            ctx.strokeStyle = line.color;
-            ctx.lineWidth = THEME.lineWidth;
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+            ctx.lineWidth = dynamicLineWidth + (6 * zoomComp);
             ctx.beginPath();
             ctx.moveTo(path[0].x, path[0].y);
             for (let j = 1; j < path.length; j++) ctx.lineTo(path[j].x, path[j].y);
             ctx.stroke();
 
-            // Cross hatching
-            ctx.strokeStyle = 'white';
-            ctx.lineWidth = 2.5;
+            // Hatching lines for Tunnels
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+            ctx.lineWidth = 1.5 * zoomComp;
+            const step = 15 * zoomComp;
             for (let j = 0; j < path.length - 1; j++) {
-                const pStart = path[j];
-                const pEnd = path[j+1];
-                const dx = pEnd.x - pStart.x;
-                const dy = pEnd.y - pStart.y;
+                const p1 = path[j], p2 = path[j+1];
+                const dx = p2.x - p1.x, dy = p2.y - p1.y;
                 const len = Math.sqrt(dx*dx + dy*dy);
-                const perpX = -dy / len;
-                const perpY = dx / len;
-                const step = 12; 
-                for (let d = 0; d <= len; d += step) {
-                    const cx = pStart.x + (dx * d / len);
-                    const cy = pStart.y + (dy * d / len);
-                    const halfW = (THEME.lineWidth + 6) / 2;
+                const perpX = -dy/len, perpY = dx/len;
+                for (let d = 0; d < len; d += step) {
+                    const cx = p1.x + dx * (d/len);
+                    const cy = p1.y + dy * (d/len);
+                    const hw = (dynamicLineWidth + (10 * zoomComp)) / 2;
                     ctx.beginPath();
-                    ctx.moveTo(cx - perpX * halfW, cy - perpY * halfW);
-                    ctx.lineTo(cx + perpX * halfW, cy + perpY * halfW);
+                    ctx.moveTo(cx - perpX * hw, cy - perpY * hw);
+                    ctx.lineTo(cx + perpX * hw, cy + perpY * hw);
                     ctx.stroke();
                 }
             }
             ctx.restore();
           } else {
-            // Bridge: Side lines style
+            // Bridges: Dark borders
             ctx.save();
-            ctx.strokeStyle = 'white';
-            ctx.lineWidth = THEME.lineWidth + 12;
+            ctx.strokeStyle = '#222';
+            ctx.lineWidth = dynamicLineWidth + (14 * zoomComp);
             ctx.lineCap = 'butt';
             ctx.beginPath();
             ctx.moveTo(path[0].x, path[0].y);
             for (let j = 1; j < path.length; j++) ctx.lineTo(path[j].x, path[j].y);
             ctx.stroke();
-
-            ctx.strokeStyle = '#1A1A1A';
-            ctx.lineWidth = THEME.lineWidth + 6;
-            ctx.beginPath();
-            ctx.moveTo(path[0].x, path[0].y);
-            for (let j = 1; j < path.length; j++) ctx.lineTo(path[j].x, path[j].y);
-            ctx.stroke();
-
-            ctx.strokeStyle = line.color;
-            ctx.lineWidth = THEME.lineWidth;
+            
+            ctx.strokeStyle = '#F8F4EE';
+            ctx.lineWidth = dynamicLineWidth + (6 * zoomComp);
             ctx.beginPath();
             ctx.moveTo(path[0].x, path[0].y);
             for (let j = 1; j < path.length; j++) ctx.lineTo(path[j].x, path[j].y);
@@ -275,7 +272,7 @@ const App: React.FC = () => {
     // Lines & Trains
     lines.forEach(line => {
       if (line.stations.length < 2) return;
-      ctx.strokeStyle = line.color; ctx.lineWidth = THEME.lineWidth; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.strokeStyle = line.color; ctx.lineWidth = dynamicLineWidth; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
       ctx.beginPath();
       const s0 = stations.find(s => s.id === line.stations[0]);
       if (s0) {
@@ -304,37 +301,58 @@ const App: React.FC = () => {
             if (curD + segL >= targetD) { const pr = (targetD - curD) / segL; tx = pts[i-1].x + (pts[i].x - pts[i-1].x) * pr; ty = pts[i-1].y + (pts[i].y - pts[i-1].y) * pr; angle = Math.atan2(pts[i].y - pts[i-1].y, pts[i].x - pts[i-1].x); break; }
             curD += segL;
           }
-          ctx.save(); ctx.translate(tx, ty); ctx.rotate(angle);
           
-          // Render Train with Capacity Bar
-          ctx.fillStyle = THEME.text; 
-          ctx.fillRect(-THEME.trainWidth/2, -THEME.trainHeight/2, THEME.trainWidth, THEME.trainHeight);
+          ctx.save();
+          ctx.translate(tx, ty);
+          ctx.rotate(angle);
+          
+          const numSegs = 1 + train.wagons;
+          const tW = THEME.trainWidth * zoomComp;
+          const tH = THEME.trainHeight * zoomComp;
+          const gap = 6 * zoomComp;
 
-          // Passenger count bar
-          const capacity = GAME_CONFIG.trainCapacity * (1 + train.wagons);
-          const loadRatio = train.passengers.length / capacity;
-          const barWidth = THEME.trainWidth - 4;
-          const barHeight = 4;
-          ctx.fillStyle = loadRatio > 0.8 ? '#EF3340' : loadRatio > 0.5 ? '#FFD100' : '#2ECC71';
-          ctx.fillRect(-barWidth/2, -THEME.trainHeight/2 - 6, barWidth * loadRatio, barHeight);
-          ctx.strokeStyle = 'rgba(0,0,0,0.2)';
-          ctx.strokeRect(-barWidth/2, -THEME.trainHeight/2 - 6, barWidth, barHeight);
-          
-          const pSize = dynamicPassengerSize * 0.8;
-          train.passengers.forEach((p, i) => {
-            const row = Math.floor(i / 3);
-            const col = i % 3;
-            const px = -THEME.trainWidth/2 + 8 + col * (pSize + 4);
-            const py = -THEME.trainHeight/2 + 8 + row * (pSize + 4);
-            drawShape(ctx, px, py, pSize / 2, p.targetType, true, 1.5);
-          });
+          for (let s = 0; s < numSegs; s++) {
+            ctx.save();
+            ctx.translate(-s * (tW + gap), 0);
+            
+            // Draw connector
+            if (s > 0) {
+              ctx.strokeStyle = '#333';
+              ctx.lineWidth = 3 * zoomComp;
+              ctx.beginPath(); ctx.moveTo(tW/2, 0); ctx.lineTo(tW/2 + gap, 0); ctx.stroke();
+            }
+
+            // Train Body
+            ctx.fillStyle = THEME.text; 
+            ctx.fillRect(-tW/2, -tH/2, tW, tH);
+
+            // Load bar
+            const capacity = GAME_CONFIG.trainCapacity; // Per segment
+            const segPass = train.passengers.slice(s * capacity, (s + 1) * capacity);
+            const loadRatio = segPass.length / capacity;
+            const barW = tW - (8 * zoomComp);
+            const barH = 4 * zoomComp;
+            ctx.fillStyle = loadRatio > 0.8 ? '#EF3340' : loadRatio > 0.5 ? '#FFD100' : '#2ECC71';
+            ctx.fillRect(-barW/2, -tH/2 - (8 * zoomComp), barW * loadRatio, barH);
+            
+            // Draw internal passengers
+            const pSize = dynamicPassengerSize * 0.7;
+            segPass.forEach((p, i) => {
+              const row = Math.floor(i / 3);
+              const col = i % 3;
+              const px = -tW/2 + (10 * zoomComp) + col * (pSize + (4 * zoomComp));
+              const py = -tH/2 + (10 * zoomComp) + row * (pSize + (4 * zoomComp));
+              drawShape(ctx, px, py, pSize / 2, p.targetType, true, 1.5);
+            });
+            ctx.restore();
+          }
           ctx.restore();
         }
       });
     });
 
     if (isDragging && dragStart && dragCurrent) {
-      ctx.strokeStyle = THEME.lineColors[activeLineIdx]; ctx.lineWidth = THEME.lineWidth; ctx.setLineDash([15, 10]);
+      ctx.strokeStyle = THEME.lineColors[activeLineIdx]; ctx.lineWidth = dynamicLineWidth; ctx.setLineDash([15, 10]);
       ctx.beginPath(); ctx.moveTo(dragStart.x, dragStart.y);
       getBentPath(dragStart, dragCurrent).forEach(p => ctx.lineTo(p.x, p.y));
       ctx.stroke(); ctx.setLineDash([]);
@@ -345,8 +363,8 @@ const App: React.FC = () => {
       if (s.waitingPassengers.length > 4) {
         ctx.beginPath();
         ctx.strokeStyle = '#999999';
-        ctx.lineWidth = 1;
-        ctx.arc(s.x, s.y, dynamicStationSize + 4, 0, Math.PI * 2);
+        ctx.lineWidth = 1.5 * zoomComp;
+        ctx.arc(s.x, s.y, dynamicStationSize + (6 * zoomComp), 0, Math.PI * 2);
         ctx.stroke();
       }
 
@@ -354,19 +372,19 @@ const App: React.FC = () => {
       
       const dotCount = GAME_CONFIG.softCapacity;
       const dotSpacing = 8 * zoomComp;
-      const dotRadius = 1.5 * zoomComp;
+      const dotRadius = 1.8 * zoomComp;
       const startX = s.x - ((dotCount - 1) * dotSpacing) / 2;
       for (let i = 0; i < dotCount; i++) {
         ctx.beginPath();
         ctx.fillStyle = s.waitingPassengers.length > i ? '#333333' : '#CCCCCC';
-        ctx.arc(startX + i * dotSpacing, s.y + dynamicStationSize + 10, dotRadius, 0, Math.PI * 2);
+        ctx.arc(startX + i * dotSpacing, s.y + dynamicStationSize + (12 * zoomComp), dotRadius, 0, Math.PI * 2);
         ctx.fill();
       }
 
       ctx.fillStyle = THEME.text; 
       ctx.font = `900 ${dynamicTextSize}px Inter`; 
       ctx.textAlign = 'center';
-      ctx.fillText(s.name.toUpperCase(), s.x, s.y + dynamicStationSize + (25 * zoomComp));
+      ctx.fillText(s.name.toUpperCase(), s.x, s.y + dynamicStationSize + (30 * zoomComp));
       
       const pSize = dynamicPassengerSize;
       s.waitingPassengers.forEach((p, i) => {
@@ -378,9 +396,9 @@ const App: React.FC = () => {
       if (s.waitingPassengers.length >= GAME_CONFIG.maxPassengers - 1) {
         ctx.beginPath();
         ctx.strokeStyle = '#EF3340';
-        ctx.lineWidth = 4 * zoomComp;
+        ctx.lineWidth = 5 * zoomComp;
         ctx.lineCap = 'round';
-        ctx.arc(s.x, s.y, dynamicStationSize + 6, -Math.PI/2, -Math.PI/2 + s.timer * Math.PI * 2);
+        ctx.arc(s.x, s.y, dynamicStationSize + (8 * zoomComp), -Math.PI/2, -Math.PI/2 + s.timer * Math.PI * 2);
         ctx.stroke();
       }
     });
@@ -389,9 +407,9 @@ const App: React.FC = () => {
     scoreAnimations.forEach(anim => {
       const elapsed = currentTime - anim.startTime;
       const opacity = 1 - elapsed / 1000;
-      const floatY = anim.y - (elapsed / 1000) * 50;
+      const floatY = anim.y - (elapsed / 1000) * 100 * zoomComp;
       ctx.fillStyle = `rgba(0, 0, 0, ${opacity})`;
-      ctx.font = `bold ${dynamicTextSize * 1.5}px Inter`;
+      ctx.font = `black ${dynamicTextSize * 1.8}px Inter`;
       ctx.textAlign = 'center';
       ctx.fillText('+1', anim.x, floatY);
     });
