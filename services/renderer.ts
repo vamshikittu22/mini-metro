@@ -1,3 +1,4 @@
+
 import { GameState, Station, TransitLine, City, Point, StationType } from '../types';
 import { THEME, GAME_CONFIG } from '../constants';
 import { getBentPath, getDistance, isSegmentCrossingWater, project } from './geometry';
@@ -17,7 +18,6 @@ export class Renderer {
     const { ctx } = this;
     const { stations, lines, scoreAnimations } = state;
 
-    // Swiss-style background
     ctx.fillStyle = THEME.background;
     ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
@@ -25,7 +25,6 @@ export class Renderer {
     ctx.translate(camera.x, camera.y);
     ctx.scale(camera.scale, camera.scale);
 
-    // Grid System
     ctx.strokeStyle = THEME.grid;
     ctx.lineWidth = 1;
     const gridSize = 100;
@@ -33,10 +32,9 @@ export class Renderer {
     for (let x = -gridBound/2; x < gridBound; x += gridSize) { ctx.beginPath(); ctx.moveTo(x, -gridBound/2); ctx.lineTo(x, gridBound); ctx.stroke(); }
     for (let y = -gridBound/2; y < gridBound; y += gridSize) { ctx.beginPath(); ctx.moveTo(-gridBound/2, y); ctx.lineTo(gridBound, y); ctx.stroke(); }
 
-    // Water Rendering - Enhanced for "Real Map" Look
     const time = Date.now() / 1000;
     ctx.fillStyle = THEME.water;
-    ctx.strokeStyle = '#BDD1E0'; // Shoreline color
+    ctx.strokeStyle = '#BDD1E0';
     ctx.lineWidth = 2 / camera.scale;
     
     currentCity.water.forEach(poly => {
@@ -52,7 +50,6 @@ export class Renderer {
       ctx.fill();
       ctx.stroke();
 
-      // Gentle Water Motion (Subtle Ripples)
       ctx.save();
       ctx.globalAlpha = 0.2;
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
@@ -60,7 +57,6 @@ export class Renderer {
       ctx.beginPath();
       poly.forEach((pt, i) => {
         const p = project(pt.lat, pt.lon, currentCity);
-        // Animate shoreline ripple
         const shift = Math.sin(time + i * 0.5) * (4 / camera.scale);
         if (i === 0) ctx.moveTo(p.x + shift, p.y + shift);
         else ctx.lineTo(p.x + shift, p.y + shift);
@@ -75,28 +71,29 @@ export class Renderer {
     const dynamicTextSize = 13 * zoomComp;
     const dynamicLineWidth = THEME.lineWidth * Math.pow(camera.scale, 0.2);
 
-    // Infrastructure: Tunnels and Bridges
     lines.forEach(line => {
       for (let i = 1; i < line.stations.length; i++) {
         const sA = stations.find(s => s.id === line.stations[i-1]);
         const sB = stations.find(s => s.id === line.stations[i]);
         if (sA && sB && isSegmentCrossingWater(sA, sB, currentCity)) {
           const path = [sA, ...getBentPath(sA, sB)];
-          const isTunnel = line.id % 2 === 0;
+          
+          // Deterministic infrastructure choice to avoid resource-dependent flickering
+          // preferring tunnels if line is even (historical rule) but allowing mixed usage
+          const isTunnel = (line.id + sA.id + sB.id) % 2 === 0;
 
           if (isTunnel) {
             ctx.save();
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
-            ctx.lineWidth = dynamicLineWidth + (6 * zoomComp);
+            ctx.strokeStyle = 'rgba(0, 0, 0, 0.05)';
+            ctx.lineWidth = dynamicLineWidth + (8 * zoomComp);
             ctx.beginPath();
             ctx.moveTo(path[0].x, path[0].y);
             for (let j = 1; j < path.length; j++) ctx.lineTo(path[j].x, path[j].y);
             ctx.stroke();
 
-            // Internal tunnel dashes
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
-            ctx.lineWidth = 1.5 * zoomComp;
-            const step = 15 * zoomComp;
+            ctx.strokeStyle = '#666666'; 
+            ctx.lineWidth = 2 * zoomComp;
+            const step = 12 * zoomComp;
             for (let j = 0; j < path.length - 1; j++) {
                 const p1 = path[j], p2 = path[j+1];
                 const dx = p2.x - p1.x, dy = p2.y - p1.y;
@@ -105,7 +102,7 @@ export class Renderer {
                 for (let d = 0; d < len; d += step) {
                     const cx = p1.x + dx * (d/len);
                     const cy = p1.y + dy * (d/len);
-                    const hw = (dynamicLineWidth + (10 * zoomComp)) / 2;
+                    const hw = (dynamicLineWidth + (6 * zoomComp)) / 2;
                     ctx.beginPath();
                     ctx.moveTo(cx - perpX * hw, cy - perpY * hw);
                     ctx.lineTo(cx + perpX * hw, cy + perpY * hw);
@@ -114,7 +111,6 @@ export class Renderer {
             }
             ctx.restore();
           } else {
-            // Bridge
             ctx.save();
             ctx.strokeStyle = '#222';
             ctx.lineWidth = dynamicLineWidth + (14 * zoomComp);
@@ -136,7 +132,6 @@ export class Renderer {
       }
     });
 
-    // Transit Lines
     lines.forEach(line => {
       if (line.stations.length < 2) return;
       ctx.strokeStyle = line.color; ctx.lineWidth = dynamicLineWidth; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
@@ -154,7 +149,6 @@ export class Renderer {
         ctx.stroke();
       }
 
-      // Trains
       line.trains.forEach(train => {
         const sIdx = Math.max(0, Math.min(train.nextStationIndex, line.stations.length - 1));
         const fIdx = Math.max(0, Math.min(train.direction === 1 ? sIdx - 1 : sIdx + 1, line.stations.length - 1));
@@ -209,7 +203,6 @@ export class Renderer {
       });
     });
 
-    // Dragging Line Preview
     if (dragging.active && dragging.start && dragging.current) {
       ctx.strokeStyle = THEME.lineColors[dragging.activeLineIdx]; ctx.lineWidth = dynamicLineWidth; ctx.setLineDash([15, 10]);
       ctx.beginPath(); ctx.moveTo(dragging.start.x, dragging.start.y);
@@ -217,7 +210,6 @@ export class Renderer {
       ctx.stroke(); ctx.setLineDash([]);
     }
 
-    // Stations
     stations.forEach(s => {
       if (s.waitingPassengers.length > 4) {
         ctx.beginPath(); ctx.strokeStyle = '#999999'; ctx.lineWidth = 1.5 * zoomComp;
@@ -254,7 +246,6 @@ export class Renderer {
       }
     });
 
-    // Score Animations
     scoreAnimations.forEach(anim => {
       const elapsed = Date.now() - anim.startTime;
       const opacity = 1 - elapsed / 1000;

@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { GameState, Station, CITIES, City, Point, GameMode } from './types';
+import { GameState, Station, City, Point, GameMode, LogEntry } from './types';
+import { CITIES } from './data/cities';
 import { project, getDistance, distToSegment } from './services/geometry';
 import { GameEngine } from './services/gameEngine';
 import { Renderer } from './services/renderer';
@@ -8,6 +9,8 @@ import { Strategist } from './components/Strategist';
 import { Stats } from './components/HUD/Stats';
 import { ResourcePanel } from './components/HUD/ResourcePanel';
 import { SystemValidator } from './services/validation';
+import { THEME, GAME_CONFIG } from './constants';
+import { DataLogger } from './services/dataLogger';
 
 type AppView = 'MAIN_MENU' | 'CITY_SELECT' | 'MODE_SELECT' | 'GAME';
 
@@ -25,7 +28,6 @@ const App: React.FC = () => {
   const [showAudit, setShowAudit] = useState(false);
   const [showStrategist, setShowStrategist] = useState(false);
   
-  // UI-Synced state (updated at a lower frequency for performance)
   const [uiState, setUiState] = useState<GameState | null>(null);
 
   const [dimensions, setDimensions] = useState({ width: window.innerWidth, height: window.innerHeight });
@@ -57,6 +59,10 @@ const App: React.FC = () => {
     setView('MODE_SELECT');
   };
 
+  const restartGame = () => {
+    if (currentCity) startGame();
+  };
+
   const startGame = () => {
     if (!currentCity) return;
     const initialStations: Station[] = currentCity.initialStations.map(s => {
@@ -64,10 +70,38 @@ const App: React.FC = () => {
       return { ...pos, id: s.id, type: s.type, name: s.name, waitingPassengers: [], timer: 0 };
     });
     
-    const initialInventory = { lines: 5, trains: 3, tunnels: 3, bridges: 2, wagons: 5 };
+    // Scale initial inventory with city difficulty (e.g. difficulty 1.8 -> + ~90% bonus)
+    const scaleFactor = 1 + (currentCity.difficulty * 0.5);
+    const initialInventory = { 
+      lines: Math.ceil(GAME_CONFIG.baseResources.lines * scaleFactor), 
+      trains: Math.ceil(GAME_CONFIG.baseResources.trains * scaleFactor), 
+      tunnels: Math.ceil(GAME_CONFIG.baseResources.tunnels * scaleFactor), 
+      bridges: Math.ceil(GAME_CONFIG.baseResources.bridges * scaleFactor), 
+      wagons: Math.ceil(GAME_CONFIG.baseResources.wagons * scaleFactor) 
+    };
+
     const engine = new GameEngine({
-      cityId: currentCity.id, mode: selectedMode, stations: initialStations, lines: [], score: 0, level: 1, gameActive: true, autoSpawn: true, dayNightAuto: true, isNightManual: false, timeScale: 1, daysElapsed: 0, nextRewardIn: 60000 * 7,
-      resources: { ...initialInventory }, totalResources: { ...initialInventory }, weeklyAuditLog: [], isPausedForReward: false, scoreAnimations: []
+      cityId: currentCity.id, 
+      mode: selectedMode, 
+      stations: initialStations, 
+      lines: [], 
+      score: 0, 
+      level: 1, 
+      gameActive: true, 
+      autoSpawn: true, 
+      dayNightAuto: true, 
+      isNightManual: false, 
+      timeScale: 1, 
+      daysElapsed: 0, 
+      nextRewardIn: 60000 * 7,
+      resources: { ...initialInventory }, 
+      totalResources: { ...initialInventory }, 
+      weeklyAuditLog: [], 
+      isPausedForReward: false, 
+      scoreAnimations: [],
+      passengerTimer: 0, 
+      stationTimer: 0,
+      analytics: []
     });
     engineRef.current = engine;
     setUiState({ ...engine.state });
@@ -80,6 +114,12 @@ const App: React.FC = () => {
     const initialScale = Math.min(0.6, (window.innerWidth * 0.7) / (maxX - minX || 1));
     setCamera({ x: window.innerWidth / 2 - ((minX + maxX) / 2) * initialScale, y: window.innerHeight / 2 - ((minY + maxY) / 2) * initialScale, scale: initialScale });
     setView('GAME');
+  };
+
+  const handleDownloadAnalysis = () => {
+    if (engineRef.current && currentCity) {
+      DataLogger.downloadReport(engineRef.current.state, currentCity);
+    }
   };
 
   useEffect(() => {
@@ -103,7 +143,6 @@ const App: React.FC = () => {
       if (engineRef.current && rendererRef.current && currentCity) { 
         engineRef.current.update(t); 
         
-        // High-frequency render (60fps)
         rendererRef.current.draw(
           engineRef.current.state, 
           camera, 
@@ -111,8 +150,7 @@ const App: React.FC = () => {
           { active: isDragging, start: dragStart, current: dragCurrent, activeLineIdx }
         );
 
-        // Throttled UI update (~15Hz) for React performance
-        if (t - lastUiUpdate > 66) {
+        if (t - lastUiUpdate > 100) {
           setUiState({ ...engineRef.current.state });
           lastUiUpdate = t;
         }
@@ -195,11 +233,11 @@ const App: React.FC = () => {
               <h3 className="text-5xl font-black uppercase tracking-tighter mb-6 group-hover:text-blue-400 transition-colors">{city.name}</h3>
               <div className="aspect-square bg-white/5 border border-white/10 relative overflow-hidden p-8 transition-all group-hover:border-white/30">
                 <div className="flex gap-2 mb-4">
-                  <div className="w-3 h-3 rounded-full bg-red-500" />
-                  <div className="w-3 h-3 rounded-full bg-blue-500" />
-                  <div className="w-3 h-3 rounded-full bg-green-500" />
+                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: THEME.lineColors[0] }} />
+                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: THEME.lineColors[1] }} />
+                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: THEME.lineColors[2] }} />
                 </div>
-                <p className="text-[10px] font-bold opacity-40 uppercase tracking-widest">Efficiency Required: {Math.floor(city.difficulty * 10)}/10.</p>
+                <p className="text-[10px] font-bold opacity-40 uppercase tracking-widest">Difficulty: {Math.floor(city.difficulty * 10)}/10.</p>
               </div>
             </div>
           ))}
@@ -247,12 +285,14 @@ const App: React.FC = () => {
             activeLineIdx={activeLineIdx} 
             onLineIdxChange={setActiveLineIdx} 
             lines={uiState.lines} 
+            stations={uiState.stations}
             onAddTrain={handleAddTrain} 
             onRemoveTrain={handleRemoveTrain}
             onDeleteLine={handleLineDelete} 
             onAudit={() => setShowAudit(!showAudit)}
             onAddWagon={(trainId) => { engineRef.current?.addWagonToTrain(activeLineIdx, trainId); syncStateImmediate(); }}
             onRemoveWagon={(trainId) => { engineRef.current?.removeWagonFromTrain(activeLineIdx, trainId); syncStateImmediate(); }}
+            onDownload={handleDownloadAnalysis}
           />
         </>
       )}
@@ -306,31 +346,68 @@ const App: React.FC = () => {
       
       {showAudit && uiState && (
         <div className="fixed bottom-32 left-8 z-[100] bg-white p-6 border-2 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] min-w-[300px]">
-           <h4 className="text-[10px] font-black uppercase mb-4 tracking-widest border-b border-black pb-2">System Audit & Integrity</h4>
-           <div className="mb-4 p-2 bg-black/5 text-[9px] font-mono leading-tight border border-black/10">
+           <h4 className="text-[10px] font-black uppercase mb-4 tracking-widest border-b border-black pb-2 text-black">System Audit & Integrity</h4>
+           <div className="mb-4 p-2 bg-black/5 text-[9px] font-mono leading-tight border border-black/10 text-black font-bold">
              STATUS: {SystemValidator.validateSystemState(uiState, currentCity!) ? 'OPTIMAL' : 'ADJUSTING'} <br/>
              VERIFICATION CYCLE: 5.0s
            </div>
            {Object.entries(uiState.totalResources).map(([k, v]) => (
-             <div key={k} className="flex justify-between py-1.5 text-[10px] font-black uppercase border-b border-black/5 last:border-0">
-               <span className="opacity-40">{k}</span>
-               <span className="tabular-nums">{uiState.resources[k as keyof typeof uiState.resources]} / {v}</span>
+             <div key={k} className="flex justify-between py-1.5 text-[10px] font-black uppercase border-b border-black last:border-0 text-black">
+               <span className="opacity-70">{k}</span>
+               <span className="tabular-nums font-black">{uiState.resources[k as keyof typeof uiState.resources]} / {v}</span>
              </div>
            ))}
         </div>
       )}
 
       {uiState?.isPausedForReward && uiState?.pendingRewardOptions && (
-        <div className="fixed inset-0 z-[400] flex items-center justify-center bg-white/20 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[400] flex items-center justify-center bg-white/40 backdrop-blur-sm">
           <div className="bg-white p-12 max-w-2xl w-full border-4 border-black shadow-[16px_16px_0px_0px_rgba(0,0,0,1)] animate-in zoom-in-95">
-            <h2 className="text-4xl font-black uppercase tracking-tighter mb-12 border-b-4 border-black pb-4">System Expansion</h2>
+            <h2 className="text-4xl font-black uppercase tracking-tighter mb-12 border-b-4 border-black pb-4 text-black">System Expansion</h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
               {uiState.pendingRewardOptions.map(choice => (
                 <button key={choice.id} onClick={() => { engineRef.current?.selectReward(choice); syncStateImmediate(); }} className="group flex flex-col items-center p-8 bg-white border-4 border-black hover:bg-black hover:text-white transition-all shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] hover:shadow-none hover:translate-x-2 hover:translate-y-2">
-                  <span className="text-[10px] font-black uppercase opacity-60 mb-2 group-hover:opacity-100">{choice.label}</span>
-                  <span className="text-xl font-black uppercase text-center leading-tight">{choice.description}</span>
+                  <span className="text-[10px] font-black uppercase mb-2 text-black group-hover:text-white">{choice.label}</span>
+                  <span className="text-xl font-black uppercase text-center leading-tight text-black group-hover:text-white">{choice.description}</span>
                 </button>
               ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {uiState && !uiState.gameActive && (
+        <div className="fixed inset-0 z-[500] flex items-center justify-center bg-black/60 backdrop-blur-md">
+          <div className="bg-white p-12 max-w-xl w-full border-4 border-black shadow-[20px_20px_0px_0px_rgba(0,0,0,1)] animate-in zoom-in-105">
+            <h2 className="text-5xl font-black uppercase tracking-tighter mb-4 text-black border-b-8 border-black pb-4">System Halted</h2>
+            <p className="text-xl font-black uppercase mb-12 text-black/60 tracking-tight">One of your stations reached critical capacity.</p>
+            
+            <div className="grid grid-cols-2 gap-1 mb-12 bg-black border-2 border-black">
+              <StatCard label="Final Throughput" val={uiState.score} />
+              <StatCard label="Weeks Operational" val={uiState.level} />
+              <StatCard label="Network Size" val={uiState.stations.length} />
+              <StatCard label="Transit Lines" val={uiState.lines.length} />
+            </div>
+
+            <div className="flex flex-col gap-4">
+              <button 
+                onClick={restartGame}
+                className="w-full py-6 bg-[#2ECC71] text-white border-4 border-black text-2xl font-black uppercase tracking-tighter shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] hover:shadow-none hover:translate-x-1 hover:translate-y-1 transition-all"
+              >
+                Re-Initialize Network
+              </button>
+              <button 
+                onClick={() => setView('CITY_SELECT')}
+                className="w-full py-4 bg-white text-black border-4 border-black text-lg font-black uppercase tracking-tighter hover:bg-black hover:text-white transition-colors"
+              >
+                Change Region
+              </button>
+              <button 
+                onClick={handleDownloadAnalysis}
+                className="w-full py-2 bg-black text-white text-[10px] font-black uppercase"
+              >
+                Download Analysis Data
+              </button>
             </div>
           </div>
         </div>
@@ -338,6 +415,13 @@ const App: React.FC = () => {
     </div>
   );
 };
+
+const StatCard = ({ label, val }: { label: string, val: number | string }) => (
+  <div className="bg-white p-6 flex flex-col justify-center border border-black">
+    <span className="text-[9px] font-black uppercase tracking-widest text-black/40 mb-1">{label}</span>
+    <span className="text-4xl font-black text-black tabular-nums leading-none">{val}</span>
+  </div>
+);
 
 const MenuBtn = ({ children, icon, onClick }: any) => (
   <div onClick={onClick} className="flex items-center gap-6 group cursor-pointer">

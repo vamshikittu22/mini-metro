@@ -1,9 +1,10 @@
 
 import { 
-  GameState, Station, TransitLine, Train, Passenger, StationType, CITIES, City, RewardChoice, ScoreAnimation 
+  GameState, Station, TransitLine, Train, Passenger, StationType, City, RewardChoice, ScoreAnimation, LogEntry
 } from '../types';
+import { CITIES } from '../data/cities';
 import { GAME_CONFIG, THEME, CITY_STATION_POOLS } from '../constants';
-import { getDistance, isSegmentCrossingWater, project } from './geometry';
+import { getDistance, isSegmentCrossingWater, project, WORLD_SIZE, isPointInPolygon } from './geometry';
 import { InventoryManager } from './inventoryManager';
 import { SystemValidator } from './validation';
 
@@ -13,13 +14,17 @@ export class GameEngine {
   passengerIdCounter: number = 0;
   stationIdCounter: number = 1000;
   lastAuditTime: number = 0;
+  lastLogTime: number = 0;
   simulationHistory: any[] = [];
   usedNames: Set<string> = new Set();
   
   constructor(initialState: GameState) {
     this.state = {
       ...initialState,
-      scoreAnimations: []
+      scoreAnimations: [],
+      passengerTimer: 0,
+      stationTimer: 0,
+      analytics: initialState.analytics || []
     };
     this.state.nextRewardIn = 60000 * 7; 
     this.usedNames = new Set();
@@ -31,6 +36,7 @@ export class GameEngine {
     if (this.lastUpdate === 0) {
       this.lastUpdate = currentTime;
       this.lastAuditTime = currentTime;
+      this.lastLogTime = currentTime;
       return;
     }
     const rawDt = currentTime - this.lastUpdate;
@@ -38,6 +44,7 @@ export class GameEngine {
     const dt = Math.min(rawDt, 100) * this.state.timeScale;
 
     this.updateTime(dt);
+    this.updateSpawning(dt);
     this.updateTrains(dt);
     this.updateStations(dt);
     this.updateAnimations(currentTime);
@@ -46,6 +53,43 @@ export class GameEngine {
     if (currentTime - this.lastAuditTime > 5000) {
       this.runAudit();
       this.lastAuditTime = currentTime;
+    }
+
+    if (currentTime - this.lastLogTime > 10000) {
+      this.logAnalytics(currentTime);
+      this.lastLogTime = currentTime;
+    }
+  }
+
+  logAnalytics(timestamp: number) {
+    const totalWaiting = this.state.stations.reduce((acc, s) => acc + s.waitingPassengers.length, 0);
+    const entry: LogEntry = {
+      timestamp,
+      score: this.state.score,
+      stationCount: this.state.stations.length,
+      lineCount: this.state.lines.length,
+      trainCount: this.state.lines.reduce((acc, l) => acc + l.trains.length, 0),
+      waitingTotal: totalWaiting,
+      resources: { ...this.state.resources }
+    };
+    this.state.analytics.push(entry);
+  }
+
+  updateSpawning(dt: number) {
+    if (!this.state.autoSpawn) return;
+
+    this.state.passengerTimer += dt;
+    this.state.stationTimer += dt;
+
+    const spawnRate = this.getDynamicSpawnRate();
+    if (this.state.passengerTimer >= spawnRate) {
+      this.spawnPassenger();
+      this.state.passengerTimer = 0;
+    }
+
+    if (this.state.stationTimer >= GAME_CONFIG.stationSpawnRate) {
+      this.spawnStation();
+      this.state.stationTimer = 0;
     }
   }
 
@@ -118,7 +162,6 @@ export class GameEngine {
     if (startStation.id === endStation.id) return lineIdx;
     const isCreative = this.state.mode === 'CREATIVE';
 
-    // 1. Determine target line
     let line = this.state.lines.find(l => l.stations[0] === startStation.id || l.stations[l.stations.length - 1] === startStation.id);
     let targetLineId = line ? line.id : -1;
     if (targetLineId === -1) {
@@ -126,12 +169,10 @@ export class GameEngine {
       for(let i=0; i<10; i++) { if(!usedIds.has(i)) { targetLineId = i; break; } }
     }
 
-    // 2. Pre-check resource constraints
     const crossesWater = isSegmentCrossingWater(startStation, endStation, city);
     if (crossesWater && !isCreative) {
-      const isTunnelLine = targetLineId % 2 === 0;
-      const resourceAvailable = isTunnelLine ? this.state.resources.tunnels : this.state.resources.bridges;
-      if (resourceAvailable <= 0) return lineIdx;
+      const totalAvailable = this.state.resources.tunnels + this.state.resources.bridges;
+      if (totalAvailable <= 0) return lineIdx;
     }
 
     if (!line) {
@@ -188,7 +229,6 @@ export class GameEngine {
         if (t.nextStationIndex >= line.stations.length) t.nextStationIndex = line.stations.length - 1;
       });
     } else {
-      // Split Logic: Check if player has line inventory
       if (this.state.resources.lines > 0 || this.state.mode === 'CREATIVE') {
         line.stations = head;
         const usedIds = new Set(this.state.lines.map(l => l.id));
@@ -206,8 +246,6 @@ export class GameEngine {
           this.addTrainToLine(nextId);
         }
       } else {
-        // Enforce pruning: If no lines available, user can't split, only shorten from head
-        // Alternatively, Mini Metro allows removal but the tail is lost
         line.stations = head;
       }
     }
@@ -270,18 +308,30 @@ export class GameEngine {
     const station = this.state.stations.find(s => s.id === stationId);
     if (!station) return;
 
-    // Alight
     train.passengers = train.passengers.filter(p => {
+      // 1. Destination Check
       if (p.targetType === station.type) {
         this.state.score++;
         this.state.scoreAnimations.push({ id: Math.random(), x: station.x, y: station.y, startTime: Date.now() });
         return false;
       }
-      if (station.id === p.nextTransferStationId) { station.waitingPassengers.push(p); return false; }
+      // 2. Interchange Check
+      if (station.id === p.nextTransferStationId) { 
+        // Re-calculate their next leg before placing them in the station queue
+        const nextLeg = this.findNextLeg(station.id, p.targetType);
+        if (nextLeg) {
+          p.requiredLineId = nextLeg.lineId;
+          p.nextTransferStationId = nextLeg.transferStationId;
+        } else {
+          p.requiredLineId = undefined;
+          p.nextTransferStationId = undefined;
+        }
+        station.waitingPassengers.push(p); 
+        return false; 
+      }
       return true;
     });
 
-    // Board
     const capacity = GAME_CONFIG.trainCapacity * (1 + train.wagons);
     const space = capacity - train.passengers.length;
     if (space > 0) {
@@ -291,7 +341,6 @@ export class GameEngine {
       station.waitingPassengers = station.waitingPassengers.filter(p => !boardIds.has(p.id));
     }
 
-    // Next
     if (train.direction === 1) {
       if (train.nextStationIndex === line.stations.length - 1) { train.direction = -1; train.nextStationIndex--; } else train.nextStationIndex++;
     } else {
@@ -312,16 +361,17 @@ export class GameEngine {
     if (this.state.stations.some(s => s.timer >= 1.0)) this.state.gameActive = false;
   }
 
-  private getUniqueName(): string {
-    const pool = CITY_STATION_POOLS[this.state.cityId] || CITY_STATION_POOLS['london'];
+  private getUniqueName(cityId: string): string {
+    const pool = CITY_STATION_POOLS[cityId] || CITY_STATION_POOLS['london'];
     let baseCandidate = pool[Math.floor(Math.random() * pool.length)];
     let candidate = baseCandidate;
     let suffix = 1;
     
     while (this.usedNames.has(candidate)) {
       suffix++;
-      candidate = `${baseCandidate} ${this.toRoman(suffix)}`;
-      if (suffix > 100) break; 
+      const roman = this.toRoman(suffix);
+      candidate = `${baseCandidate} ${roman}`.trim();
+      if (suffix > 50) break;
     }
     
     this.usedNames.add(candidate);
@@ -329,7 +379,7 @@ export class GameEngine {
   }
 
   private toRoman(num: number): string {
-    if (num === 1) return "";
+    if (num <= 1) return "";
     const lookup: Record<string, number> = {M:1000,CM:900,D:500,CD:400,C:100,XC:90,L:50,XL:40,X:10,IX:9,V:5,IV:4,I:1};
     let roman = '';
     for (let i in lookup) {
@@ -338,7 +388,7 @@ export class GameEngine {
         num -= lookup[i];
       }
     }
-    return ` ${roman}`;
+    return roman;
   }
 
   spawnPassenger() {
@@ -360,23 +410,55 @@ export class GameEngine {
     }));
   }
 
-  spawnStation(width: number, height: number, projectFn: any) {
+  spawnStation() {
     const city = CITIES.find(c => c.id === this.state.cityId) || CITIES[0];
     const types: StationType[] = ['circle', 'triangle', 'square', 'pentagon', 'star'];
-    for (let i = 0; i < 20; i++) {
-      const lat = city.bounds.minLat + Math.random() * (city.bounds.maxLat - city.bounds.minLat);
-      const lon = city.bounds.minLon + Math.random() * (city.bounds.maxLon - city.bounds.minLon);
-      const pos = projectFn(lat, lon, city);
-      if (this.state.stations.every(s => getDistance(s, pos) > 120)) {
+    const screenPadding = 450; 
+    
+    const activeTrains = this.state.lines.reduce((acc, l) => acc + l.trains.length, 0);
+    const totalWaterResources = this.state.totalResources.tunnels + this.state.totalResources.bridges;
+    const availableWaterResources = this.state.resources.tunnels + this.state.resources.bridges;
+    
+    const diffMult = 1 / (city.difficulty * GAME_CONFIG.spawnRatios.difficultyMultiplier);
+    const maxStationsGlobal = Math.max(5, activeTrains * GAME_CONFIG.spawnRatios.stationsPerTrain * diffMult);
+    
+    if (this.state.stations.length >= maxStationsGlobal && this.state.mode !== 'CREATIVE') return;
+
+    const waterPolygons = city.water.map(poly => poly.map(pt => project(pt.lat, pt.lon, city)));
+    const currentWaterStations = this.state.stations.filter(s => 
+      waterPolygons.some(poly => isPointInPolygon(s, poly))
+    ).length;
+    
+    const maxIsolatedStations = totalWaterResources * GAME_CONFIG.spawnRatios.stationsPerWaterResource * diffMult;
+    const allowWaterSpawn = this.state.mode === 'CREATIVE' || (availableWaterResources > 0 && currentWaterStations < maxIsolatedStations);
+
+    for (let i = 0; i < 60; i++) {
+      const r1 = Math.random();
+      const r2 = Math.random();
+      
+      const lat = city.bounds.minLat + (r1 * (city.bounds.maxLat - city.bounds.minLat));
+      const lon = city.bounds.minLon + (r2 * (city.bounds.maxLon - city.bounds.minLon));
+      const pos = project(lat, lon, city);
+
+      if (pos.x < screenPadding || pos.x > WORLD_SIZE - screenPadding || 
+          pos.y < screenPadding || pos.y > WORLD_SIZE - screenPadding) {
+        continue;
+      }
+
+      const inWater = waterPolygons.some(poly => isPointInPolygon(pos, poly));
+      if (inWater && !allowWaterSpawn) continue;
+
+      if (this.state.stations.every(s => getDistance(s, pos) > 190)) {
         this.state.stations.push({ 
           id: this.stationIdCounter++, 
-          type: types[Math.floor(Math.random()*types.length)], 
-          name: this.getUniqueName(), 
+          type: types[Math.floor(Math.random() * types.length)], 
+          name: this.getUniqueName(this.state.cityId), 
           x: pos.x, 
           y: pos.y, 
           waitingPassengers: [], 
           timer: 0 
         });
+        this.refreshAllPassengerRoutes();
         break;
       }
     }

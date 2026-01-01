@@ -1,3 +1,4 @@
+
 import { Point, City } from '../types';
 
 /**
@@ -13,6 +14,21 @@ export function project(lat: number, lon: number, city: City): Point {
   const y = WORLD_SIZE - ((lat - minLat) / (maxLat - minLat)) * WORLD_SIZE;
   
   return { x, y };
+}
+
+/**
+ * Checks if a point is inside a polygon using Ray Casting algorithm.
+ */
+export function isPointInPolygon(point: Point, polygon: Point[]): boolean {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const xi = polygon[i].x, yi = polygon[i].y;
+    const xj = polygon[j].x, yj = polygon[j].y;
+    const intersect = ((yi > point.y) !== (yj > point.y)) &&
+        (point.x < (xj - xi) * (point.y - yi) / (yj - yi) + xi);
+    if (intersect) inside = !inside;
+  }
+  return inside;
 }
 
 /**
@@ -90,14 +106,21 @@ export function lineIntersectsLine(a: Point, b: Point, c: Point, d: Point): bool
 export function isSegmentCrossingWater(p1: Point, p2: Point, city: City): boolean {
   const path = [p1, ...getBentPath(p1, p2)];
   
+  // Cache projectable water points
+  const waterPolygons = city.water.map(poly => poly.map(pt => project(pt.lat, pt.lon, city)));
+
   for (let j = 0; j < path.length - 1; j++) {
     const start = path[j];
     const end = path[j+1];
     
-    for (const poly of city.water) {
+    for (const poly of waterPolygons) {
+      // 1. Check if either endpoint is inside water
+      if (isPointInPolygon(start, poly) || isPointInPolygon(end, poly)) return true;
+
+      // 2. Check for edge intersections
       for (let i = 0; i < poly.length; i++) {
-        const pA = project(poly[i].lat, poly[i].lon, city);
-        const pB = project(poly[(i + 1) % poly.length].lat, poly[(i + 1) % poly.length].lon, city);
+        const pA = poly[i];
+        const pB = poly[(i + 1) % poly.length];
         if (lineIntersectsLine(start, end, pA, pB)) return true;
       }
     }

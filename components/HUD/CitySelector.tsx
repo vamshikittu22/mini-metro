@@ -1,5 +1,8 @@
+
 import React from 'react';
-import { City, CITIES } from '../../types';
+// Fix: CITIES is located in data/cities.ts, not types.ts.
+import { City } from '../../types';
+import { CITIES } from '../../data/cities';
 
 interface CitySelectorProps {
   currentCity: City;
