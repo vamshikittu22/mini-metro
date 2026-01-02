@@ -1,6 +1,7 @@
 import { GameState, City, StationType } from '../types';
 import { InventoryManager } from './inventoryManager';
-import { getDistance, isSegmentCrossingWater } from './geometry';
+import { isSegmentCrossingWater } from './geometry';
+import { RouteEvaluator } from './pathfinding/RouteEvaluator';
 
 export class SystemValidator {
   /**
@@ -19,6 +20,8 @@ export class SystemValidator {
       bridges: 0,
     };
 
+    let waterCrossings = 0;
+
     state.lines.forEach(line => {
       active.trains += line.trains.length;
       active.wagons += line.trains.reduce((sum, t) => sum + t.wagons, 0);
@@ -27,17 +30,22 @@ export class SystemValidator {
         const s1 = state.stations.find(s => s.id === line.stations[i]);
         const s2 = state.stations.find(s => s.id === line.stations[i + 1]);
         if (s1 && s2 && isSegmentCrossingWater(s1, s2, city)) {
-          if (line.id % 2 === 0) active.tunnels++;
-          else active.bridges++;
+          waterCrossings++;
         }
       }
     });
 
+    // Allocate resources to crossings using the same shared pool logic as InventoryManager
+    let remainingCrossings = waterCrossings;
+    active.tunnels = Math.min(remainingCrossings, state.totalResources.tunnels);
+    remainingCrossings -= active.tunnels;
+    active.bridges = Math.min(remainingCrossings, state.totalResources.bridges);
+
     // 2. Cross-check against invariants
     let integrityViolation = false;
-    const resources = ['lines', 'trains', 'tunnels', 'bridges', 'wagons'] as const;
+    const resourceKeys = ['lines', 'trains', 'tunnels', 'bridges', 'wagons'] as const;
 
-    resources.forEach(key => {
+    resourceKeys.forEach(key => {
       const calculatedAvailable = state.totalResources[key] - active[key];
       if (state.resources[key] !== calculatedAvailable) {
         console.warn(`[AUDIT] Resource leak detected in ${key}. Correcting: ${state.resources[key]} -> ${calculatedAvailable}`);
@@ -50,8 +58,8 @@ export class SystemValidator {
   }
 
   /**
-   * Pathfinding Stress Test: Headless verification of the routing engine.
-   * Simulates 100 passengers and calculates success rate.
+   * Pathfinding Stress Test: Headless verification of the routing engine using Hybrid Greedy logic.
+   * Simulates 100 passengers and calculates reachability rate.
    */
   static runPathfindingStressTest(state: GameState, engine: any): { successRate: number, paths: number } {
     if (state.stations.length < 2 || state.lines.length === 0) return { successRate: 0, paths: 0 };
@@ -62,7 +70,6 @@ export class SystemValidator {
 
     for (let i = 0; i < iterations; i++) {
       const startStation = state.stations[Math.floor(Math.random() * state.stations.length)];
-      // Fix: Added explicit type cast to ensure targetType is treated as StationType
       const targetType = stationTypes[Math.floor(Math.random() * stationTypes.length)] as StationType;
       
       // Skip if start station is already the target type
@@ -71,12 +78,15 @@ export class SystemValidator {
         continue;
       }
 
-      const leg = engine.findNextLeg(startStation.id, targetType);
-      if (leg) successes++;
+      // Check if any line at the start station can reach the destination via Hybrid Greedy evaluation
+      const validLines = RouteEvaluator.findValidLines(startStation, targetType, state);
+      if (validLines.length > 0) {
+        successes++;
+      }
     }
 
     const rate = (successes / iterations) * 100;
-    console.debug(`[AUDIT] Pathfinding Stress Test: ${rate}% Success Rate (${successes}/${iterations})`);
+    console.debug(`[AUDIT] Pathfinding Stress Test: ${rate}% Reachability Rate (${successes}/${iterations})`);
     return { successRate: rate, paths: successes };
   }
 }

@@ -8,6 +8,7 @@ import { getDistance, isSegmentCrossingWater, project, WORLD_SIZE, isPointInPoly
 import { InventoryManager } from './inventoryManager';
 import { SystemValidator } from './validation';
 import { HybridGreedyRouter } from './pathfinding/HybridGreedyRouter';
+import { RouteEvaluator } from './pathfinding/RouteEvaluator';
 
 export class GameEngine {
   state: GameState;
@@ -105,7 +106,6 @@ export class GameEngine {
   runAudit() {
     const city = CITIES.find(c => c.id === this.state.cityId) || CITIES[0];
     SystemValidator.validateSystemState(this.state, city);
-    // Pathfinding stress test removed as it was BFS-dependent
   }
 
   updateTime(dt: number) {
@@ -206,6 +206,7 @@ export class GameEngine {
     }
 
     InventoryManager.validateInventory(this.state, city);
+    RouteEvaluator.clearCache();
     return lineIdx;
   }
 
@@ -257,6 +258,7 @@ export class GameEngine {
     }
     
     InventoryManager.validateInventory(this.state, city);
+    RouteEvaluator.clearCache();
   }
 
   updateTrains(dt: number) {
@@ -269,73 +271,93 @@ export class GameEngine {
     });
   }
 
+  /**
+   * Comprehensive handler for train station stops using the HybridGreedyRouter.
+   * Processes Alighting, Boarding, and Stranded checks.
+   */
   handleTrainAtStation(train: Train, line: TransitLine) {
     const stationId = line.stations[train.nextStationIndex];
     const station = this.state.stations.find(s => s.id === stationId);
     if (!station) return;
 
-    // Phase 1: ALIGHT passengers
+    // --- PHASE 1: ALIGHT PASSENGERS ---
     train.passengers = train.passengers.filter(p => {
       const decision = this.router.shouldPassengerAlight(p, station, train, this.state);
+      
       if (decision.action === 'DELIVER') {
         this.state.score++;
-        this.state.scoreAnimations.push({ id: Math.random(), x: station.x, y: station.y, startTime: Date.now() });
-        return false;
+        this.state.scoreAnimations.push({ 
+          id: Math.random(), 
+          x: station.x, 
+          y: station.y, 
+          startTime: Date.now() 
+        });
+        return false; // Remove from train
       } else if (decision.action === 'TRANSFER') {
         this.router.resetWaitTimer(p);
         p.currentStationId = station.id;
         station.waitingPassengers.push(p);
-        return false;
+        return false; // Remove from train
       }
-      return true; // STAY
+      return true; // Stay on train (action === 'STAY')
     });
 
-    // Phase 2: BOARD passengers
-    const capacity = (GAME_CONFIG.trainCapacity * (1 + train.wagons));
-    let space = capacity - train.passengers.length;
+    // --- PHASE 2: BOARD PASSENGERS ---
+    const totalCapacity = GAME_CONFIG.trainCapacity * (1 + train.wagons);
+    let availableSpace = totalCapacity - train.passengers.length;
     
-    if (space > 0) {
-      const boarders: Passenger[] = [];
+    if (availableSpace > 0) {
       const stillWaiting: Passenger[] = [];
 
       for (const p of station.waitingPassengers) {
-        if (space > 0) {
+        if (availableSpace > 0) {
           const decision = this.router.shouldPassengerBoard(p, train, station, this.state);
           if (decision.shouldBoard) {
             this.router.resetWaitTimer(p);
             p.boardingHistory = p.boardingHistory || [];
-            p.boardingHistory.push({ lineId: train.lineId, stationId: station.id, timestamp: Date.now() });
-            boarders.push(p);
-            space--;
-          } else {
-            stillWaiting.push(p);
+            p.boardingHistory.push({ 
+              lineId: train.lineId, 
+              stationId: station.id, 
+              timestamp: Date.now() 
+            });
+            train.passengers.push(p);
+            availableSpace--;
+            continue; // Passenger boarded, don't add to stillWaiting
           }
-        } else {
-          stillWaiting.push(p);
         }
+        stillWaiting.push(p);
       }
-
-      train.passengers.push(...boarders);
       station.waitingPassengers = stillWaiting;
     }
 
-    // Phase 3: CHECK stranded passengers
+    // --- PHASE 3: CHECK STRANDED PASSENGERS ---
     station.waitingPassengers = station.waitingPassengers.filter(p => {
       const isStranded = this.router.isPassengerStranded(p, station, this.state);
       if (isStranded) {
         if (this.state.mode !== 'CREATIVE') {
-          console.warn(`Passenger ${p.id} stranded at ${station.name} for too long and was removed.`);
+          console.warn(`[ROUTING] Passenger ${p.id} removed from ${station.name} - no valid path to ${p.destinationShape}`);
         }
-        return false;
+        return false; // Remove stranded passenger
       }
-      return true;
+      return true; // Keep
     });
 
-    // Advance train index
+    // --- TRAIN PROGRESSION ---
+    // Advance next station index based on current direction
     if (train.direction === 1) {
-      if (train.nextStationIndex === line.stations.length - 1) { train.direction = -1; train.nextStationIndex--; } else train.nextStationIndex++;
+      if (train.nextStationIndex === line.stations.length - 1) {
+        train.direction = -1;
+        train.nextStationIndex--;
+      } else {
+        train.nextStationIndex++;
+      }
     } else {
-      if (train.nextStationIndex === 0) { train.direction = 1; train.nextStationIndex++; } else train.nextStationIndex--;
+      if (train.nextStationIndex === 0) {
+        train.direction = 1;
+        train.nextStationIndex++;
+      } else {
+        train.nextStationIndex--;
+      }
     }
   }
 
@@ -506,6 +528,7 @@ export class GameEngine {
       this.state.lines.splice(idx, 1);
       const city = CITIES.find(c => c.id === this.state.cityId) || CITIES[0];
       InventoryManager.validateInventory(this.state, city);
+      RouteEvaluator.clearCache();
     }
   }
 }

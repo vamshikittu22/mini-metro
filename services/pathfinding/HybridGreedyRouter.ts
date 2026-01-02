@@ -1,9 +1,32 @@
-
 import { Passenger, Train, Station, GameState, TransitLine } from '../../types';
 import { RouteEvaluator } from './RouteEvaluator';
 import { PATHFINDING_CONFIG } from '../../constants/pathfinding.config';
 
 export class HybridGreedyRouter {
+  /**
+   * Retrieves all stations that the train will visit in its current direction before turning around.
+   */
+  private getFutureStops(train: Train, line: TransitLine, state: GameState): Station[] {
+    const stops: Station[] = [];
+    if (train.direction === 1) {
+      for (let i = train.nextStationIndex; i < line.stations.length; i++) {
+        const sId = line.stations[i];
+        const s = state.stations.find(st => st.id === sId);
+        if (s) stops.push(s);
+      }
+    } else if (train.direction === -1) {
+      for (let i = train.nextStationIndex; i >= 0; i--) {
+        const sId = line.stations[i];
+        const s = state.stations.find(st => st.id === sId);
+        if (s) stops.push(s);
+      }
+    }
+    return stops;
+  }
+
+  /**
+   * Determines if a passenger should board a specific train at the current station.
+   */
   shouldPassengerBoard(
     passenger: Passenger,
     train: Train,
@@ -13,7 +36,7 @@ export class HybridGreedyRouter {
     const trainLine = state.lines.find(l => l.id === train.lineId);
     if (!trainLine) return { shouldBoard: false, reason: 'no_line' };
 
-    // 1. Check if train.line can reach passenger.destinationShape
+    // 1. Verify if this train's line can reach the destination within max transfer depth
     const canReach = RouteEvaluator.canLineReachDestination(
       trainLine,
       passenger.destinationShape,
@@ -23,15 +46,15 @@ export class HybridGreedyRouter {
 
     if (!canReach) return { shouldBoard: false, reason: 'no_path' };
 
-    // 2. Find all valid lines at currentStation
+    // 2. Identify all valid transit options available at this station
     const validLines = RouteEvaluator.findValidLines(currentStation, passenger.destinationShape, state);
 
-    // 3. Filter for lines that are BETTER than train.line
+    // 3. Compare the current train's line against other available lines at the station
     const betterLines = validLines.filter(l => 
       l.id !== train.lineId && RouteEvaluator.getBetterLine(l, trainLine, passenger.destinationShape, state)?.id === l.id
     );
 
-    // 4. If better lines exist
+    // 4. Preference logic: If a significantly better line exists, the passenger may choose to wait
     if (betterLines.length > 0) {
       if (passenger.waitStartTime === undefined) {
         passenger.waitStartTime = Date.now();
@@ -44,26 +67,32 @@ export class HybridGreedyRouter {
         if (waitedTime < PATHFINDING_CONFIG.PREFERENCE_WAIT_TIME) {
           return { shouldBoard: false, reason: 'keep_waiting' };
         } else {
+          // Board anyway if waited too long for a "better" train
           return { shouldBoard: true, reason: 'waited_long_enough' };
         }
       }
     }
 
-    // 5. If no better lines exist
-    const hasDirect = trainLine.stations.some(sId => state.stations.find(st => st.id === sId)?.type === passenger.destinationShape);
+    // 5. Directional check: Is the train actually heading towards the destination on its current leg?
+    const futureStops = this.getFutureStops(train, trainLine, state);
+    const hasDirectOnPath = futureStops.some(s => s.type === passenger.destinationShape);
+    
     return { 
       shouldBoard: true, 
-      reason: hasDirect ? 'direct_route' : 'transfer_available' 
+      reason: hasDirectOnPath ? 'direct_route_on_path' : 'line_reaches_destination' 
     };
   }
 
+  /**
+   * Determines if a passenger should alight (exit) the train at the current station.
+   */
   shouldPassengerAlight(
     passenger: Passenger,
     currentStation: Station,
     train: Train,
     state: GameState
   ): { action: 'DELIVER' | 'TRANSFER' | 'STAY'; targetLineId?: number; reason: string } {
-    // 1. Destination check
+    // 1. Delivery Check: If this station matches the passenger's destination shape
     if (currentStation.type === passenger.destinationShape) {
       return { action: 'DELIVER', reason: 'reached_destination' };
     }
@@ -71,29 +100,35 @@ export class HybridGreedyRouter {
     const trainLine = state.lines.find(l => l.id === train.lineId);
     if (!trainLine) return { action: 'STAY', reason: 'no_line' };
 
-    // 2. Get all connected lines at station
-    const connectedLines = state.lines.filter(l => l.stations.includes(currentStation.id) && l.id !== train.lineId);
+    // 2. Transfer Check: Dynamically find all other lines passing through this station
+    const otherConnectedLines = state.lines.filter(l => l.stations.includes(currentStation.id) && l.id !== train.lineId);
 
-    // 3. Filter for lines that are BETTER than train.line
-    const betterLines = connectedLines.filter(l => {
+    // 3. Evaluation: Is any other line passing through here strictly better than the current one?
+    const betterLines = otherConnectedLines.filter(l => {
       const isBetter = RouteEvaluator.getBetterLine(l, trainLine, passenger.destinationShape, state)?.id === l.id;
       const canReach = RouteEvaluator.canLineReachDestination(l, passenger.destinationShape, PATHFINDING_CONFIG.MAX_TRANSFER_DEPTH, state);
       return isBetter && canReach;
     });
 
-    // 4. If better lines exist
+    // 4. If a better line exists at this station, initiate a transfer
     if (betterLines.length > 0) {
       return { action: 'TRANSFER', targetLineId: betterLines[0].id, reason: 'transfer_for_better_route' };
     }
 
-    // 5. Else stay
+    // 5. Default: Stay on the current train if no delivery or better transfer is available
     return { action: 'STAY', reason: 'no_better_option' };
   }
 
+  /**
+   * Resets the preference timer for a passenger (e.g. after boarding or transferring).
+   */
   resetWaitTimer(passenger: Passenger) {
     passenger.waitStartTime = undefined;
   }
 
+  /**
+   * Checks if a passenger has become stranded (no reachable paths) for an extended duration.
+   */
   isPassengerStranded(passenger: Passenger, station: Station, state: GameState): boolean {
     const validLines = RouteEvaluator.findValidLines(station, passenger.destinationShape, state);
     if (validLines.length === 0) {
