@@ -264,7 +264,7 @@ This project is licensed under the **MIT License**. See the [LICENSE](LICENSE) f
 **Have a feature request?** [Start a discussion](https://github.com/user/repo/discussions)  
 **Need help?** [Join our Discord](https://discord.gg/your-invite)
 
-**Developer:** [@YourUsername](https://github.com/vamshikittu22)  
+**Developer:** [@YourUsername](https://github.com/vamsikittu22)  
 **Email:** krishnavamshi.2297@gmail.com
 
 ---
