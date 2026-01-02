@@ -7,6 +7,7 @@ import { GAME_CONFIG, THEME, CITY_STATION_POOLS } from '../constants';
 import { getDistance, isSegmentCrossingWater, project, WORLD_SIZE, isPointInPolygon } from './geometry';
 import { InventoryManager } from './inventoryManager';
 import { SystemValidator } from './validation';
+import { HybridGreedyRouter } from './pathfinding/HybridGreedyRouter';
 
 export class GameEngine {
   state: GameState;
@@ -17,6 +18,7 @@ export class GameEngine {
   lastLogTime: number = 0;
   simulationHistory: any[] = [];
   usedNames: Set<string> = new Set();
+  router: HybridGreedyRouter;
   
   constructor(initialState: GameState) {
     this.state = {
@@ -29,6 +31,7 @@ export class GameEngine {
     this.state.nextRewardIn = 60000 * 7; 
     this.usedNames = new Set();
     this.state.stations.forEach(s => this.usedNames.add(s.name));
+    this.router = new HybridGreedyRouter();
   }
 
   update(currentTime: number) {
@@ -102,7 +105,7 @@ export class GameEngine {
   runAudit() {
     const city = CITIES.find(c => c.id === this.state.cityId) || CITIES[0];
     SystemValidator.validateSystemState(this.state, city);
-    SystemValidator.runPathfindingStressTest(this.state, this);
+    // Pathfinding stress test removed as it was BFS-dependent
   }
 
   updateTime(dt: number) {
@@ -203,7 +206,6 @@ export class GameEngine {
     }
 
     InventoryManager.validateInventory(this.state, city);
-    this.refreshAllPassengerRoutes();
     return lineIdx;
   }
 
@@ -255,42 +257,6 @@ export class GameEngine {
     }
     
     InventoryManager.validateInventory(this.state, city);
-    this.refreshAllPassengerRoutes();
-  }
-
-  findNextLeg(currentStationId: number, targetType: StationType): { lineId: number, transferStationId: number } | null {
-    const stations = this.state.stations;
-    const lines = this.state.lines;
-    if (lines.length === 0) return null;
-    const adj = new Map<number, { to: number, lineId: number }[]>();
-    for (const line of lines) {
-      for (let i = 0; i < line.stations.length - 1; i++) {
-        const s1 = line.stations[i], s2 = line.stations[i + 1];
-        if (!adj.has(s1)) adj.set(s1, []); if (!adj.has(s2)) adj.set(s2, []);
-        adj.get(s1)!.push({ to: s2, lineId: line.id }); adj.get(s2)!.push({ to: s1, lineId: line.id });
-      }
-    }
-    const queue: number[] = [currentStationId];
-    const visited = new Set<number>([currentStationId]);
-    const parent = new Map<number, { from: number, lineId: number }>();
-    let foundTargetStationId: number | null = null;
-    while (queue.length > 0) {
-      const uId = queue.shift()!;
-      const uStation = stations.find(s => s.id === uId);
-      if (uStation && uStation.type === targetType && uId !== currentStationId) { foundTargetStationId = uId; break; }
-      const neighbors = adj.get(uId) || [];
-      for (const edge of neighbors) { if (!visited.has(edge.to)) { visited.add(edge.to); parent.set(edge.to, { from: uId, lineId: edge.lineId }); queue.push(edge.to); } }
-    }
-    if (foundTargetStationId === null) return null;
-    const path: number[] = []; let curr = foundTargetStationId;
-    while (curr !== currentStationId) { path.push(curr); const pData = parent.get(curr); if (!pData) break; curr = pData.from; }
-    path.push(currentStationId); path.reverse();
-    if (path.length < 2) return null;
-    const firstLegData = parent.get(path[1]); if (!firstLegData) return null;
-    const firstStepLineId = firstLegData.lineId;
-    let transferStationId = path[1];
-    for (let i = 1; i < path.length; i++) { const edge = parent.get(path[i]); if (edge && edge.lineId === firstStepLineId) transferStationId = path[i]; else break; }
-    return { lineId: firstStepLineId, transferStationId };
   }
 
   updateTrains(dt: number) {
@@ -308,39 +274,64 @@ export class GameEngine {
     const station = this.state.stations.find(s => s.id === stationId);
     if (!station) return;
 
+    // Phase 1: ALIGHT passengers
     train.passengers = train.passengers.filter(p => {
-      // 1. Destination Check
-      if (p.targetType === station.type) {
+      const decision = this.router.shouldPassengerAlight(p, station, train, this.state);
+      if (decision.action === 'DELIVER') {
         this.state.score++;
         this.state.scoreAnimations.push({ id: Math.random(), x: station.x, y: station.y, startTime: Date.now() });
         return false;
+      } else if (decision.action === 'TRANSFER') {
+        this.router.resetWaitTimer(p);
+        p.currentStationId = station.id;
+        station.waitingPassengers.push(p);
+        return false;
       }
-      // 2. Interchange Check
-      if (station.id === p.nextTransferStationId) { 
-        // Re-calculate their next leg before placing them in the station queue
-        const nextLeg = this.findNextLeg(station.id, p.targetType);
-        if (nextLeg) {
-          p.requiredLineId = nextLeg.lineId;
-          p.nextTransferStationId = nextLeg.transferStationId;
+      return true; // STAY
+    });
+
+    // Phase 2: BOARD passengers
+    const capacity = (GAME_CONFIG.trainCapacity * (1 + train.wagons));
+    let space = capacity - train.passengers.length;
+    
+    if (space > 0) {
+      const boarders: Passenger[] = [];
+      const stillWaiting: Passenger[] = [];
+
+      for (const p of station.waitingPassengers) {
+        if (space > 0) {
+          const decision = this.router.shouldPassengerBoard(p, train, station, this.state);
+          if (decision.shouldBoard) {
+            this.router.resetWaitTimer(p);
+            p.boardingHistory = p.boardingHistory || [];
+            p.boardingHistory.push({ lineId: train.lineId, stationId: station.id, timestamp: Date.now() });
+            boarders.push(p);
+            space--;
+          } else {
+            stillWaiting.push(p);
+          }
         } else {
-          p.requiredLineId = undefined;
-          p.nextTransferStationId = undefined;
+          stillWaiting.push(p);
         }
-        station.waitingPassengers.push(p); 
-        return false; 
+      }
+
+      train.passengers.push(...boarders);
+      station.waitingPassengers = stillWaiting;
+    }
+
+    // Phase 3: CHECK stranded passengers
+    station.waitingPassengers = station.waitingPassengers.filter(p => {
+      const isStranded = this.router.isPassengerStranded(p, station, this.state);
+      if (isStranded) {
+        if (this.state.mode !== 'CREATIVE') {
+          console.warn(`Passenger ${p.id} stranded at ${station.name} for too long and was removed.`);
+        }
+        return false;
       }
       return true;
     });
 
-    const capacity = GAME_CONFIG.trainCapacity * (1 + train.wagons);
-    const space = capacity - train.passengers.length;
-    if (space > 0) {
-      const boards = station.waitingPassengers.filter(p => p.requiredLineId === line.id).slice(0, space);
-      train.passengers.push(...boards);
-      const boardIds = new Set(boards.map(b => b.id));
-      station.waitingPassengers = station.waitingPassengers.filter(p => !boardIds.has(p.id));
-    }
-
+    // Advance train index
     if (train.direction === 1) {
       if (train.nextStationIndex === line.stations.length - 1) { train.direction = -1; train.nextStationIndex--; } else train.nextStationIndex++;
     } else {
@@ -396,18 +387,13 @@ export class GameEngine {
     const start = this.state.stations[Math.floor(Math.random() * this.state.stations.length)];
     const types = Array.from(new Set(this.state.stations.map(s => s.type))).filter(t => t !== start.type);
     if (types.length === 0) return;
-    const p: Passenger = { id: this.passengerIdCounter++, targetType: types[Math.floor(Math.random() * types.length)] as StationType, spawnTime: performance.now() };
-    const leg = this.findNextLeg(start.id, p.targetType);
-    if (leg) { p.requiredLineId = leg.lineId; p.nextTransferStationId = leg.transferStationId; }
+    const p: Passenger = { 
+      id: this.passengerIdCounter++, 
+      currentStationId: start.id,
+      destinationShape: types[Math.floor(Math.random() * types.length)] as StationType, 
+      spawnTime: Date.now() 
+    };
     start.waitingPassengers.push(p);
-  }
-
-  refreshAllPassengerRoutes() {
-    this.state.stations.forEach(s => s.waitingPassengers.forEach(p => {
-      const leg = this.findNextLeg(s.id, p.targetType);
-      if (leg) { p.requiredLineId = leg.lineId; p.nextTransferStationId = leg.transferStationId; }
-      else { p.requiredLineId = undefined; p.nextTransferStationId = undefined; }
-    }));
   }
 
   spawnStation() {
@@ -458,7 +444,6 @@ export class GameEngine {
           waitingPassengers: [], 
           timer: 0 
         });
-        this.refreshAllPassengerRoutes();
         break;
       }
     }
@@ -521,7 +506,6 @@ export class GameEngine {
       this.state.lines.splice(idx, 1);
       const city = CITIES.find(c => c.id === this.state.cityId) || CITIES[0];
       InventoryManager.validateInventory(this.state, city);
-      this.refreshAllPassengerRoutes();
     }
   }
 }

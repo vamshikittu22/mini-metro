@@ -194,7 +194,7 @@ export class Renderer {
               const row = Math.floor(i / 3), col = i % 3;
               const px = -tW/2 + (10 * zoomComp) + col * (pSize + (4 * zoomComp));
               const py = -tH/2 + (10 * zoomComp) + row * (pSize + (4 * zoomComp));
-              this.drawStationShape(ctx, px, py, pSize / 2, p.targetType, true, 1.5);
+              this.drawStationShape(ctx, px, py, pSize / 2, p.destinationShape, true, 1.5);
             });
             ctx.restore();
           }
@@ -236,7 +236,7 @@ export class Renderer {
       s.waitingPassengers.forEach((p, i) => {
         const px = s.x + dynamicStationSize + (10 * zoomComp) + (i % 3) * (pSize + (4 * zoomComp));
         const py = s.y - dynamicStationSize + Math.floor(i / 3) * (pSize + (4 * zoomComp));
-        this.drawStationShape(ctx, px, py, pSize / 2, p.targetType, true, 1.5 * zoomComp);
+        this.drawStationShape(ctx, px, py, pSize / 2, p.destinationShape, true, 1.5 * zoomComp);
       });
 
       if (s.waitingPassengers.length >= GAME_CONFIG.maxPassengers - 1) {

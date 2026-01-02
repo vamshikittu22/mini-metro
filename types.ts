@@ -24,10 +24,11 @@ export interface Station extends Point {
 
 export interface Passenger {
   id: number;
-  targetType: StationType;
+  currentStationId: number;
+  destinationShape: StationType;
   spawnTime: number;
-  nextTransferStationId?: number;
-  requiredLineId?: number;
+  waitStartTime?: number;
+  boardingHistory?: Array<{lineId: number, stationId: number, timestamp: number}>;
 }
 
 export interface TransitLine {
