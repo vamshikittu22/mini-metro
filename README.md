@@ -1,11 +1,15 @@
 # 🚇 MINI METRO ▲ WEB
 
-[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](https://github.com/your-repo)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)]()
-[![Tech Stack](https://img.shields.io/badge/stack-React_19%20|%20TS_5.8%20|%20Gemini_AI-orange.svg)]()
+![Build Status](https://img.shields.io/badge/build-passing-brightgreen)
+![Version](https://img.shields.io/badge/version-1.1.0-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.8.2-blue)
+![React](https://img.shields.io/badge/React-19.2.3-61DAFB)
+![AI](https://img.shields.io/badge/AI-Gemini_3_Pro-orange)
 
 > A high-fidelity, minimalist transit simulation engine built with modern web technologies. Strategize, expand, and optimize metropolitan rail networks across the world's greatest cities.
+
+[🎮 Play Live Demo](https://your-demo-url.com) | [📊 Report Bug](https://github.com/user/repo/issues) | [✨ Request Feature](https://github.com/user/repo/issues)
 
 ---
 
@@ -22,8 +26,11 @@
 - [10. File Structure](#10-file-structure)
 - [11. API Integration](#11-api-integration)
 - [12. Performance Optimization](#12-performance-optimization)
-- [13. Credits & Acknowledgments](#13-credits--acknowledgments)
-- [14. License](#14-license)
+- [13. Known Issues & Limitations](#13-known-issues--limitations)
+- [14. Future Roadmap](#14-future-roadmap)
+- [15. Credits & Acknowledgments](#15-credits--acknowledgments)
+- [16. License](#16-license)
+- [17. Contact & Support](#17-contact--support)
 
 ---
 
@@ -218,15 +225,47 @@ The **AI Strategist** uses the `gemini-3-pro-preview` model. It sends a JSON-str
 
 ---
 
-## 13. Credits & Acknowledgments
+## 13. 🐛 Known Issues & Limitations
+
+- Gemini API model `gemini-3-pro-preview` may not be available in all regions.
+- Performance drops with 50+ stations on lower-end devices.
+- No mobile/touch support currently (desktop optimized).
+- Canvas rendering uses 2D context (no WebGL acceleration).
+
+---
+
+## 14. 🗺️ Future Roadmap
+
+- [ ] Mobile/touch controls support.
+- [ ] Multiplayer mode (Co-op network management).
+- [ ] Custom map creator (Draw your own city water/land).
+- [ ] Steam Workshop integration (concept).
+- [ ] Global Achievement system.
+- [ ] High-fidelity Sound effects & Ambient music.
+- [ ] More cities (Stockholm, Sydney, Singapore).
+
+---
+
+## 15. Credits & Acknowledgments
 - **Original Concept**: Inspired by the brilliant *Mini Metro* by [Dinosaur Polo Club](https://dinopoloclub.com/).
 - **Libraries**: React, Vite, TailwindCSS, Google Generative AI.
 - **Design Inspiration**: Josef Müller-Brockmann & The Swiss Style.
 
 ---
 
-## 14. License
+## 16. License
 This project is licensed under the **MIT License**. See the [LICENSE](LICENSE) file for details.
+
+---
+
+## 17. 📞 Contact & Support
+
+**Found a bug?** [Open an issue](https://github.com/user/repo/issues)  
+**Have a feature request?** [Start a discussion](https://github.com/user/repo/discussions)  
+**Need help?** [Join our Discord](https://discord.gg/your-invite)
+
+**Developer:** [@YourUsername](https://github.com/yourusername)  
+**Email:** your.email@example.com
 
 ---
 
