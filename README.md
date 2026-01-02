@@ -9,7 +9,7 @@
 
 > A high-fidelity, minimalist transit simulation engine built with modern web technologies. Strategize, expand, and optimize metropolitan rail networks across the world's greatest cities.
 
-[🎮 Play Live Demo](https://your-demo-url.com) | [📊 Report Bug](https://github.com/user/repo/issues) | [✨ Request Feature](https://github.com/user/repo/issues)
+[🎮 Play Live Demo](https://mini-metro-tau.vercel.app/) | [📊 Report Bug](https://github.com/vamshikittu22/mini-metro/issues) | [✨ Request Feature](https://github.com/vamshikittu22/mini-metro/issues)
 
 ---
 
@@ -113,8 +113,8 @@ Logic is separated into specialized services:
 ### Step-by-Step
 ```bash
 # 1. Clone the repository
-git clone https://github.com/your-username/mini-metro-web.git
-cd mini-metro-web
+git clone https://github.com/vamshikittu22/mini-metro.git
+cd mini-metro
 
 # 2. Install dependencies
 npm install
@@ -260,14 +260,15 @@ This project is licensed under the **MIT License**. See the [LICENSE](LICENSE) f
 
 ## 17. 📞 Contact & Support
 
-**Found a bug?** [Open an issue](https://github.com/user/repo/issues)  
-**Have a feature request?** [Start a discussion](https://github.com/user/repo/discussions)  
+**Found a bug?** [Open an issue](https://github.com/vamshikittu22/mini-metro/issues)  
+**Have a feature request?** [Start a discussion](https://github.com/vamshikittu22/mini-metro/issues)  
 **Need help?** [Join our Discord](https://discord.gg/your-invite)
 
-**Developer:** [@YourUsername](https://github.com/vamsikittu22)  
-**Email:** krishnavamshi.2297@gmail.com
+**Developer:** [Vamshi Krishna](https://github.com/vamsikittu22)  
+**Email:** krishnavamshi.2297@gmail.com  
+**Vercel:** [Live Demo](https://mini-metro-tau.vercel.app/)
 
 ---
 
-**Built with ▲ by [Your Name/Handle]**
+**Built with ▲ by [Vamshi Krishna](https://github.com/vamsikittu22)**
 *(Mini Metro is a registered trademark of Dinosaur Polo Club. This project is a non-commercial educational work.)*
