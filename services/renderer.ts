@@ -371,27 +371,46 @@ export class Renderer {
         ctx.stroke();
       }
 
-      // Waiting Passengers
-      const pSize = dynamicPassengerSize;
-      const dotCount = GAME_CONFIG.softCapacity;
-      const dotSpacing = 8 * zoomComp;
-      const dotRadius = 1.8 * zoomComp;
-      const startX = s.x - ((dotCount - 1) * dotSpacing) / 2;
+      // Waiting Passengers (4x2 Grid Visualization)
+      const MAX_VISIBLE = 8;
+      const pSize = (THEME.stationSize * 0.4) * zoomComp;
+      const spacing = pSize + (3 * zoomComp);
       
-      // Capacity Dots
-      for (let i = 0; i < dotCount; i++) {
-        ctx.beginPath();
-        ctx.fillStyle = s.waitingPassengers.length > i ? '#333333' : '#CCCCCC';
-        ctx.arc(startX + i * dotSpacing, s.y + dynamicStationSize + (12 * zoomComp), dotRadius, 0, Math.PI * 2);
-        ctx.fill();
+      // Position grid to the right of station
+      const gridX = s.x + dynamicStationSize + (8 * zoomComp);
+      const gridY = s.y - dynamicStationSize;
+
+      // Draw up to 8 passengers
+      const visibleCount = Math.min(s.waitingPassengers.length, MAX_VISIBLE);
+      for (let i = 0; i < visibleCount; i++) {
+        const p = s.waitingPassengers[i];
+        const col = i % 4;
+        const row = Math.floor(i / 4);
+        
+        const px = gridX + (col * spacing);
+        const py = gridY + (row * spacing) + (spacing / 2); // Slight vertical offset to center
+
+        // Pure white fill (#FFFFFF), Thin black stroke (#000000)
+        this.drawStationShape(ctx, px, py, pSize / 2, p.destinationShape, true, 1.0 * zoomComp, '#000000', '#FFFFFF');
       }
 
-      // Passenger Shapes
-      s.waitingPassengers.forEach((p, i) => {
-        const px = s.x + dynamicStationSize + (10 * zoomComp) + (i % 3) * (pSize + (4 * zoomComp));
-        const py = s.y - dynamicStationSize + Math.floor(i / 3) * (pSize + (4 * zoomComp));
-        this.drawStationShape(ctx, px, py, pSize / 2, p.destinationShape, true, 1.5 * zoomComp);
-      });
+      // Overflow Text (+X MORE)
+      if (s.waitingPassengers.length > MAX_VISIBLE) {
+        const extra = s.waitingPassengers.length - MAX_VISIBLE;
+        const textY = gridY + (2 * spacing) + (10 * zoomComp);
+        
+        const text = `+${extra} MORE`;
+        ctx.font = `700 ${9 * zoomComp}px Inter`;
+        const metrics = ctx.measureText(text);
+        
+        // Draw black container for white text visibility (Inverted Style)
+        ctx.fillStyle = '#1A1A1A';
+        ctx.fillRect(gridX, textY - (8 * zoomComp), metrics.width + (4 * zoomComp), 11 * zoomComp);
+        
+        ctx.fillStyle = '#FFFFFF';
+        ctx.textAlign = 'left';
+        ctx.fillText(text, gridX + (2 * zoomComp), textY);
+      }
 
       // Critical Timer
       if (s.waitingPassengers.length >= GAME_CONFIG.maxPassengers - 1) {
@@ -618,9 +637,6 @@ export class Renderer {
        let x = mousePos.x + 10;
        let y = mousePos.y + 10;
        
-       if (x + w > this.canvas.width) x = mousePos.x - w - 10;
-       if (y + h > this.canvas.height) y = mousePos.y - h - 10;
-       
        // Add rect covering the tooltip + shadow (offset 4,4) + margin
        rects.push({ x: x - 4, y: y - 4, w: w + 12, h: h + 12 });
     }
@@ -628,7 +644,17 @@ export class Renderer {
     return rects;
   }
 
-  drawStationShape(ctx: CanvasRenderingContext2D, x: number, y: number, size: number, type: StationType, fill: boolean = true, strokeWidth: number = 2.5, strokeColor?: string) {
+  drawStationShape(
+    ctx: CanvasRenderingContext2D, 
+    x: number, 
+    y: number, 
+    size: number, 
+    type: StationType, 
+    fill: boolean = true, 
+    strokeWidth: number = 2.5, 
+    strokeColor?: string,
+    fillColor: string = 'white'
+  ) {
     ctx.beginPath();
     if (type === 'circle') ctx.arc(x, y, size, 0, Math.PI * 2);
     else if (type === 'square') ctx.rect(x - size, y - size, size * 2, size * 2);
@@ -647,7 +673,12 @@ export class Renderer {
       }
       ctx.closePath();
     }
-    if (fill) { ctx.fillStyle = 'white'; ctx.fill(); }
-    ctx.strokeStyle = strokeColor || THEME.text; ctx.lineWidth = strokeWidth; ctx.stroke();
+    if (fill) { ctx.fillStyle = fillColor; ctx.fill(); }
+    
+    if (strokeWidth > 0) {
+      ctx.strokeStyle = strokeColor || THEME.text; 
+      ctx.lineWidth = strokeWidth; 
+      ctx.stroke();
+    }
   }
 }
