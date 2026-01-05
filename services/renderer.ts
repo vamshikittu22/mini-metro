@@ -84,11 +84,11 @@ export class Renderer {
       this.prevDirtyRects = []; 
       
       // For the next frame, we need to know where dynamic objects ARE right now
-      this.prevDirtyRects = this.calculateCurrentDynamicBounds(state, camera, dragging);
+      this.prevDirtyRects = this.calculateCurrentDynamicBounds(state, camera, dragging, overlay);
 
     } else {
       // Dirty Rectangle Optimization
-      const currentBounds = this.calculateCurrentDynamicBounds(state, camera, dragging);
+      const currentBounds = this.calculateCurrentDynamicBounds(state, camera, dragging, overlay);
       
       // Merge previous frame bounds (clear old pos) + current frame bounds (draw new pos)
       const dirtyRegions = [...this.prevDirtyRects, ...currentBounds];
@@ -485,7 +485,12 @@ export class Renderer {
 
   // --- Helpers ---
 
-  private calculateCurrentDynamicBounds(state: GameState, camera: { x: number, y: number, scale: number }, dragging: any): Rect[] {
+  private calculateCurrentDynamicBounds(
+    state: GameState, 
+    camera: { x: number, y: number, scale: number }, 
+    dragging: any, 
+    overlay?: { hoveredStation: Station | null, mousePos: Point }
+  ): Rect[] {
     const rects: Rect[] = [];
     const zoomComp = 1 / Math.pow(camera.scale, 0.8);
     const stationSize = (THEME.stationSize * zoomComp) * 3.5; // Include passengers area
@@ -555,6 +560,34 @@ export class Renderer {
       const pos = worldToScreen(anim.x, anim.y);
       rects.push({ x: pos.x - 20, y: pos.y - 100, w: 40, h: 100 });
     });
+
+    // 5. Tooltip
+    if (overlay && overlay.hoveredStation && !dragging.active) {
+       const station = overlay.hoveredStation;
+       const mousePos = overlay.mousePos;
+       
+       const name = station.name.toUpperCase();
+       const waiting = `${station.waitingPassengers.length} Waiting`;
+       const connectedLines = state.lines.filter(l => l.stations.includes(station.id));
+       
+       this.ctx.font = '900 10px Inter';
+       const nameW = this.ctx.measureText(name).width;
+       this.ctx.font = '500 10px Inter';
+       const waitW = this.ctx.measureText(waiting).width;
+       
+       const linesWidth = connectedLines.length > 0 ? (connectedLines.length * 12) + 12 : 0;
+       const w = Math.max(nameW, waitW, linesWidth, 80) + 24;
+       const h = connectedLines.length > 0 ? 56 : 42;
+       
+       let x = mousePos.x + 10;
+       let y = mousePos.y + 10;
+       
+       if (x + w > this.canvas.width) x = mousePos.x - w - 10;
+       if (y + h > this.canvas.height) y = mousePos.y - h - 10;
+       
+       // Add rect covering the tooltip + shadow (offset 4,4) + margin
+       rects.push({ x: x - 4, y: y - 4, w: w + 12, h: h + 12 });
+    }
 
     return rects;
   }
