@@ -9,6 +9,7 @@ import { InventoryManager } from './inventoryManager';
 import { SystemValidator } from './validation';
 import { HybridGreedyRouter } from './pathfinding/HybridGreedyRouter';
 import { RouteEvaluator } from './pathfinding/RouteEvaluator';
+import { HistoryManager, LineSnapshot } from './historyManager';
 
 export class GameEngine {
   state: GameState;
@@ -20,6 +21,7 @@ export class GameEngine {
   simulationHistory: any[] = [];
   usedNames: Set<string> = new Set();
   router: HybridGreedyRouter;
+  historyManager: HistoryManager;
   
   constructor(initialState: GameState) {
     this.state = {
@@ -33,6 +35,7 @@ export class GameEngine {
     this.usedNames = new Set();
     this.state.stations.forEach(s => this.usedNames.add(s.name));
     this.router = new HybridGreedyRouter();
+    this.historyManager = new HistoryManager();
   }
 
   update(currentTime: number) {
@@ -178,6 +181,9 @@ export class GameEngine {
       if (totalAvailable <= 0) return lineIdx;
     }
 
+    // Capture state before modification
+    this.historyManager.push(this.state.lines);
+
     if (!line) {
       if (this.state.resources.lines > 0 || isCreative) {
         if (targetLineId !== -1) {
@@ -185,16 +191,29 @@ export class GameEngine {
           line = { id: lineIdx, color: THEME.lineColors[lineIdx], stations: [startStation.id, endStation.id], trains: [] };
           this.state.lines.push(line);
           this.addTrainToLine(lineIdx);
-        } else return lineIdx;
-      } else return lineIdx;
+        } else {
+            // Revert history if we failed to create line
+            this.historyManager.undo(this.state.lines);
+            return lineIdx;
+        }
+      } else {
+          this.historyManager.undo(this.state.lines);
+          return lineIdx;
+      }
     } else {
       const alreadyContainsEnd = line.stations.includes(endStation.id);
       const isClosingLoop = (line.stations[0] === startStation.id && line.stations[line.stations.length - 1] === endStation.id) ||
                             (line.stations[line.stations.length - 1] === startStation.id && line.stations[0] === endStation.id);
       
       const uniqueCount = new Set(line.stations).size;
-      if (isClosingLoop && uniqueCount < 3) return lineIdx;
-      if (alreadyContainsEnd && !isClosingLoop) return lineIdx; 
+      if (isClosingLoop && uniqueCount < 3) {
+          this.historyManager.undo(this.state.lines);
+          return lineIdx;
+      }
+      if (alreadyContainsEnd && !isClosingLoop) {
+          this.historyManager.undo(this.state.lines);
+          return lineIdx;
+      }
 
       if (line.stations[0] === startStation.id) {
         line.stations.unshift(endStation.id);
@@ -216,6 +235,9 @@ export class GameEngine {
     const idxA = line.stations.indexOf(stationAId);
     const idxB = line.stations.indexOf(stationBId);
     if (idxA === -1 || idxB === -1 || Math.abs(idxA - idxB) !== 1) return;
+
+    // Capture state before modification
+    this.historyManager.push(this.state.lines);
 
     const city = CITIES.find(c => c.id === this.state.cityId) || CITIES[0];
     const firstIdx = Math.min(idxA, idxB);
@@ -254,7 +276,7 @@ export class GameEngine {
     }
 
     if (line.stations.length < 2) {
-      this.removeLine(lineId);
+      this.removeLine(lineId, false); // Don't record history here, we already did
     }
     
     InventoryManager.validateInventory(this.state, city);
@@ -522,7 +544,11 @@ export class GameEngine {
     }
   }
 
-  removeLine(lineId: number) {
+  removeLine(lineId: number, recordHistory: boolean = true) {
+    if (recordHistory) {
+      this.historyManager.push(this.state.lines);
+    }
+
     const idx = this.state.lines.findIndex(l => l.id === lineId);
     if (idx !== -1) {
       this.state.lines.splice(idx, 1);
@@ -530,5 +556,54 @@ export class GameEngine {
       InventoryManager.validateInventory(this.state, city);
       RouteEvaluator.clearCache();
     }
+  }
+
+  undo(): string | null {
+    const snapshot = this.historyManager.undo(this.state.lines);
+    if (snapshot) {
+      this.restoreLines(snapshot);
+      return "Undid line change";
+    }
+    return null;
+  }
+
+  redo(): string | null {
+    const snapshot = this.historyManager.redo(this.state.lines);
+    if (snapshot) {
+      this.restoreLines(snapshot);
+      return "Redid line change";
+    }
+    return null;
+  }
+
+  private restoreLines(snapshot: LineSnapshot[]) {
+    // Map existing trains to keep them if possible (Preserve train state)
+    const trainMap = new Map<number, Train[]>();
+    this.state.lines.forEach(l => trainMap.set(l.id, l.trains));
+
+    // Rebuild lines from snapshot
+    this.state.lines = snapshot.map(snap => {
+      let existingTrains = trainMap.get(snap.id) || [];
+      
+      // Safety check: ensure trains on restored/modified lines have valid indices
+      existingTrains.forEach(t => {
+        if (t.nextStationIndex >= snap.stations.length) {
+          t.nextStationIndex = Math.max(0, snap.stations.length - 1);
+          t.progress = 0; // Reset progress if route changed significantly
+        }
+      });
+      
+      return {
+        id: snap.id,
+        color: snap.color,
+        stations: snap.stations,
+        trains: existingTrains
+      };
+    });
+
+    // Recalculate inventory
+    const city = CITIES.find(c => c.id === this.state.cityId) || CITIES[0];
+    InventoryManager.validateInventory(this.state, city);
+    RouteEvaluator.clearCache();
   }
 }

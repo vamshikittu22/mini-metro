@@ -15,6 +15,7 @@ import { LoadingScreen } from './components/LoadingScreen';
 import { GameCanvas } from './components/GameCanvas';
 import { KeyboardHints } from './components/HUD/KeyboardHints';
 import { MobileWarning } from './components/MobileWarning';
+import { Toast } from './components/UI/Toast';
 
 type AppView = 'MAIN_MENU' | 'CITY_SELECT' | 'MODE_SELECT' | 'GAME';
 
@@ -24,6 +25,9 @@ const App: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<Renderer | null>(null);
   const engineRef = useRef<GameEngine | null>(null);
+  
+  const hoveredStationRef = useRef<Station | null>(null);
+  const mousePosRef = useRef<Point>({ x: 0, y: 0 });
   
   const [view, setView] = useState<AppView>('MAIN_MENU');
   const [currentCity, setCurrentCity] = useState<City | null>(null);
@@ -36,6 +40,8 @@ const App: React.FC = () => {
   const [, setThrowError] = useState<void>();
   const [isLoading, setIsLoading] = useState(false);
   const [isFadingOut, setIsFadingOut] = useState(false);
+  
+  const [toast, setToast] = useState<{ msg: string, visible: boolean }>({ msg: '', visible: false });
 
   const [dimensions, setDimensions] = useState({ width: window.innerWidth, height: window.innerHeight });
   const [isDragging, setIsDragging] = useState(false);
@@ -43,6 +49,10 @@ const App: React.FC = () => {
   const [dragStart, setDragStart] = useState<Station | null>(null);
   const [dragCurrent, setDragCurrent] = useState<Point | null>(null);
   const [activeLineIdx, setActiveLineIdx] = useState(0);
+
+  const showToast = (msg: string) => {
+    setToast({ msg, visible: true });
+  };
 
   const initGame = (city: City) => {
     setCurrentCity(city);
@@ -133,6 +143,25 @@ const App: React.FC = () => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (view !== 'GAME' || !engineRef.current) return;
 
+      // Handle Undo/Redo
+      if ((e.metaKey || e.ctrlKey) && e.code === 'KeyZ') {
+        e.preventDefault();
+        if (e.shiftKey) {
+          const msg = engineRef.current.redo();
+          if (msg) {
+            showToast(msg);
+            syncStateImmediate();
+          }
+        } else {
+          const msg = engineRef.current.undo();
+          if (msg) {
+            showToast(msg);
+            syncStateImmediate();
+          }
+        }
+        return;
+      }
+
       switch (e.code) {
         case 'Space':
           e.preventDefault();
@@ -221,7 +250,8 @@ const App: React.FC = () => {
             engineRef.current.state, 
             camera, 
             currentCity, 
-            { active: isDragging, start: dragStart, current: dragCurrent, activeLineIdx }
+            { active: isDragging, start: dragStart, current: dragCurrent, activeLineIdx },
+            { hoveredStation: hoveredStationRef.current, mousePos: mousePosRef.current }
           );
 
           if (t - lastUiUpdate > 100) {
@@ -364,6 +394,8 @@ const App: React.FC = () => {
             setDragStart={setDragStart}
             dragCurrent={dragCurrent}
             setDragCurrent={setDragCurrent}
+            hoveredStationRef={hoveredStationRef}
+            mousePosRef={mousePosRef}
           />
   
           <div className="fixed bottom-32 left-8 z-50 flex flex-col gap-2">
@@ -443,6 +475,7 @@ const App: React.FC = () => {
         </ErrorBoundary>
       </div>
       <MobileWarning />
+      <Toast message={toast.msg} visible={toast.visible} onHide={() => setToast({ ...toast, visible: false })} />
     </>
   );
 };

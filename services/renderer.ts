@@ -47,7 +47,13 @@ export class Renderer {
     console.log(`[RENDERER] Debug Mode: ${this.debugMode ? 'ON' : 'OFF'}`);
   }
 
-  draw(state: GameState, camera: { x: number, y: number, scale: number }, currentCity: City, dragging: { active: boolean, start: Station | null, current: Point | null, activeLineIdx: number }) {
+  draw(
+    state: GameState, 
+    camera: { x: number, y: number, scale: number }, 
+    currentCity: City, 
+    dragging: { active: boolean, start: Station | null, current: Point | null, activeLineIdx: number },
+    overlay?: { hoveredStation: Station | null, mousePos: Point }
+  ) {
     const start = performance.now();
     
     // 1. Handle Resize
@@ -87,10 +93,6 @@ export class Renderer {
       // Merge previous frame bounds (clear old pos) + current frame bounds (draw new pos)
       const dirtyRegions = [...this.prevDirtyRects, ...currentBounds];
       
-      // Optimize: Merge overlapping rects could go here, but for now we iterate
-      // We union them slightly to reduce draw calls if they are close? 
-      // For simplicity and correctness, we process them.
-
       this.ctx.save();
       
       // Define clipping path for all dirty regions
@@ -126,6 +128,11 @@ export class Renderer {
       }
 
       this.prevDirtyRects = currentBounds;
+    }
+
+    // 3. Draw Tooltip (Always on top, no clipping)
+    if (overlay && overlay.hoveredStation && !dragging.active) {
+       this.drawTooltip(this.ctx, overlay.hoveredStation, overlay.mousePos, state);
     }
   }
 
@@ -403,6 +410,75 @@ export class Renderer {
       ctx.font = `black ${dynamicTextSize * 1.8}px Inter`; ctx.textAlign = 'center';
       ctx.fillText('+1', anim.x, floatY);
     });
+
+    ctx.restore();
+  }
+  
+  private drawTooltip(ctx: CanvasRenderingContext2D, station: Station, mousePos: Point, state: GameState) {
+    const name = station.name.toUpperCase();
+    const waiting = `${station.waitingPassengers.length} Waiting`;
+    
+    // Connected lines logic
+    const connectedLines = state.lines
+      .filter(l => l.stations.includes(station.id))
+      .map(l => l.color);
+
+    // Measure Content
+    ctx.font = '900 10px Inter';
+    const nameMetrics = ctx.measureText(name);
+    
+    ctx.font = '500 10px Inter';
+    const waitMetrics = ctx.measureText(waiting);
+    
+    const linesWidth = connectedLines.length > 0 ? (connectedLines.length * 12) + 12 : 0;
+    
+    const w = Math.max(nameMetrics.width, waitMetrics.width, linesWidth, 80) + 24;
+    const h = connectedLines.length > 0 ? 56 : 42;
+    
+    // Position offset 10px from cursor
+    let x = mousePos.x + 10;
+    let y = mousePos.y + 10;
+    
+    // Boundary checks
+    if (x + w > this.canvas.width) x = mousePos.x - w - 10;
+    if (y + h > this.canvas.height) y = mousePos.y - h - 10;
+
+    ctx.save();
+    
+    // Shadow
+    ctx.fillStyle = 'rgba(0,0,0,1)';
+    ctx.fillRect(x + 4, y + 4, w, h);
+    
+    // Bg
+    ctx.fillStyle = 'white';
+    ctx.fillRect(x, y, w, h);
+    
+    // Border
+    ctx.strokeStyle = 'black';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x, y, w, h);
+    
+    // Text
+    ctx.fillStyle = 'black';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    
+    ctx.font = '900 10px Inter';
+    ctx.fillText(name, x + 12, y + 10);
+    
+    ctx.font = '600 9px Inter';
+    ctx.fillStyle = '#666';
+    ctx.fillText(waiting.toUpperCase(), x + 12, y + 24);
+    
+    // Line indicators
+    if (connectedLines.length > 0) {
+       connectedLines.forEach((color, i) => {
+         ctx.fillStyle = color;
+         ctx.beginPath();
+         ctx.arc(x + 16 + (i * 12), y + 42, 3, 0, Math.PI * 2);
+         ctx.fill();
+       });
+    }
 
     ctx.restore();
   }

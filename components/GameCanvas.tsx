@@ -23,6 +23,9 @@ interface GameCanvasProps {
   setDragStart: (val: Station | null) => void;
   dragCurrent: Point | null;
   setDragCurrent: (val: Point | null) => void;
+
+  hoveredStationRef: React.MutableRefObject<Station | null>;
+  mousePosRef: React.MutableRefObject<Point>;
 }
 
 export const GameCanvas: React.FC<GameCanvasProps> = ({
@@ -43,7 +46,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   dragStart,
   setDragStart,
   dragCurrent,
-  setDragCurrent
+  setDragCurrent,
+  hoveredStationRef,
+  mousePosRef
 }) => {
 
   const screenToWorld = (sx: number, sy: number) => ({
@@ -113,12 +118,22 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
   const handleMouseMove = (e: React.MouseEvent) => {
     const rect = canvasRef.current?.getBoundingClientRect(); if (!rect) return;
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+
+    if (mousePosRef) mousePosRef.current = { x: mx, y: my };
+
     if (isPanning && dragCurrent) { 
       setCamera(prev => ({ ...prev, x: prev.x + (e.clientX - dragCurrent.x), y: prev.y + (e.clientY - dragCurrent.y) })); 
       setDragCurrent({ x: e.clientX, y: e.clientY }); 
     } 
     else if (isDragging) { 
-      setDragCurrent(screenToWorld(e.clientX - rect.left, e.clientY - rect.top)); 
+      setDragCurrent(screenToWorld(mx, my)); 
+    } else {
+       // Hover check
+       const world = screenToWorld(mx, my);
+       const hit = engineRef.current?.state.stations.find(s => getDistance(s, world) < 80 / camera.scale);
+       if (hoveredStationRef) hoveredStationRef.current = hit || null;
     }
   };
 

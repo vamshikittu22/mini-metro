@@ -31,6 +31,9 @@ export const KeyboardHints: React.FC = () => {
         <div className="flex justify-center"><span className="bg-black text-white px-1.5 py-0.5 rounded-[2px] min-w-[24px] text-center">TAB</span></div>
         <span className="self-center">Cycle Line</span>
         
+        <div className="flex justify-center"><span className="bg-black text-white px-1.5 py-0.5 rounded-[2px] min-w-[24px] text-center">Z</span></div>
+        <span className="self-center">Undo / Redo</span>
+        
         <div className="flex justify-center"><span className="bg-black text-white px-1.5 py-0.5 rounded-[2px] min-w-[24px] text-center">ESC</span></div>
         <span className="self-center">Close / Menu</span>
       </div>
