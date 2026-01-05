@@ -170,6 +170,12 @@ const App: React.FC = () => {
           e.preventDefault();
           setActiveLineIdx(prev => (prev + 1) % 10);
           break;
+        case 'KeyD':
+          e.preventDefault();
+          if (rendererRef.current) {
+             rendererRef.current.toggleDebug();
+          }
+          break;
         case 'Escape':
           e.preventDefault();
           if (showStrategist) setShowStrategist(false);
