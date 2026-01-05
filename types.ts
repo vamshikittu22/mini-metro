@@ -12,6 +12,7 @@ export interface ScoreAnimation {
   x: number;
   y: number;
   startTime: number;
+  transferCount: number;
 }
 
 export interface Station extends Point {

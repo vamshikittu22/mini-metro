@@ -101,8 +101,9 @@ export class GameEngine {
   }
 
   updateAnimations(currentTime: number) {
+    // Extend life to 1.2s to accommodate easing
     this.state.scoreAnimations = this.state.scoreAnimations.filter(anim => 
-      currentTime - anim.startTime < 1000
+      currentTime - anim.startTime < 1200
     );
   }
 
@@ -308,11 +309,20 @@ export class GameEngine {
       
       if (decision.action === 'DELIVER') {
         this.state.score++;
+        
+        // Calculate transfers: history length - 1 (initial board). Default to 0 if history missing.
+        const transferCount = (p.boardingHistory?.length || 1) - 1;
+        
+        // Add minimal jitter to stacking animations so they don't perfectly overlap
+        const jitterX = (Math.random() * 16) - 8;
+        const jitterY = (Math.random() * 16) - 8;
+
         this.state.scoreAnimations.push({ 
           id: Math.random(), 
-          x: station.x, 
-          y: station.y, 
-          startTime: Date.now() 
+          x: station.x + jitterX, 
+          y: station.y + jitterY, 
+          startTime: Date.now(),
+          transferCount: Math.max(0, transferCount)
         });
         return false; // Remove from train
       } else if (decision.action === 'TRANSFER') {

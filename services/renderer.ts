@@ -404,11 +404,47 @@ export class Renderer {
     // 4. Animations
     scoreAnimations.forEach(anim => {
       const elapsed = Date.now() - anim.startTime;
-      const opacity = 1 - elapsed / 1000;
-      const floatY = anim.y - (elapsed / 1000) * 100 * zoomComp;
-      ctx.fillStyle = `rgba(0, 0, 0, ${opacity})`;
-      ctx.font = `black ${dynamicTextSize * 1.8}px Inter`; ctx.textAlign = 'center';
-      ctx.fillText('+1', anim.x, floatY);
+      const duration = 1200; // 1.2s total duration
+      const t = Math.min(1, elapsed / duration);
+      
+      if (t >= 1) return;
+
+      // Easing (Cubic Ease Out for float)
+      const ease = 1 - Math.pow(1 - t, 3);
+      
+      // Determine Color
+      let color = '#2ECC71'; // Default Green (0 transfers)
+      if (anim.transferCount === 1) color = '#FFD100'; // Yellow
+      if (anim.transferCount >= 2) color = '#FF8200'; // Orange
+
+      // Physics
+      const floatDist = 60 * zoomComp;
+      const curY = anim.y - (ease * floatDist);
+      
+      // Fade out logic (last 30% of lifecycle)
+      const opacity = t > 0.7 ? 1 - ((t - 0.7) / 0.3) : 1;
+      
+      // Scale Pulse (0.0 -> 1.2 -> 1.0)
+      let scale = 1;
+      if (t < 0.2) {
+          scale = (t / 0.2) * 1.2; // Ramp up to 1.2
+      } else {
+          scale = 1.2 - ((t - 0.2) * 0.25); // Settle to 1.0 (approx)
+      }
+
+      ctx.save();
+      ctx.translate(anim.x, curY);
+      ctx.scale(scale, scale);
+      ctx.globalAlpha = opacity;
+      
+      ctx.fillStyle = color;
+      ctx.font = `900 ${dynamicTextSize * 1.5}px Inter`; 
+      ctx.textAlign = 'center';
+      
+      // Draw "+1"
+      ctx.fillText('+1', 0, 0);
+      
+      ctx.restore();
     });
 
     ctx.restore();
