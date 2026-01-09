@@ -1,4 +1,4 @@
-import React, { Component, ErrorInfo, ReactNode } from 'react';
+import React, { ErrorInfo, ReactNode } from 'react';
 
 interface Props {
   children?: ReactNode;
@@ -12,12 +12,17 @@ interface State {
 /**
  * Standard React Error Boundary implemented as a class component to capture lifecycle errors.
  */
-export class ErrorBoundary extends Component<Props, State> {
-  // Initializing state directly as a property for cleaner TypeScript integration
-  public state: State = {
+// Fix: Use React.Component explicitly to ensure generic types for props and state are correctly inherited.
+export class ErrorBoundary extends React.Component<Props, State> {
+  // Fix: Declare and initialize state as a class property to ensure it's correctly recognized by the TypeScript compiler.
+  public override state: State = {
     hasError: false,
     error: null
   };
+
+  constructor(props: Props) {
+    super(props);
+  }
 
   static getDerivedStateFromError(error: Error): State {
     return { hasError: true, error };
@@ -28,7 +33,7 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   render() {
-    // Accessing hasError through this.state
+    // Fix: Access hasError through this.state which is now properly typed via inheritance.
     if (this.state.hasError) {
       return (
         <div className="fixed inset-0 z-[999] bg-[#F8F4EE] flex items-center justify-center p-12 font-sans select-none">
@@ -44,7 +49,7 @@ export class ErrorBoundary extends Component<Props, State> {
                 A critical runtime error has disrupted the transit network.
               </p>
               <div className="bg-black/5 border-l-4 border-black p-4 font-mono text-[10px] uppercase text-black/70 overflow-auto max-h-32 whitespace-pre-wrap">
-                {/* Accessing error message through this.state with safety checks */}
+                {/* Fix: Safely access error message from state */}
                 {this.state.error?.message || "Unknown Error Sequence"}
                 {this.state.error?.stack && `\n\n${this.state.error.stack.split('\n')[0]}`}
               </div>
@@ -61,7 +66,7 @@ export class ErrorBoundary extends Component<Props, State> {
       );
     }
 
-    // Accessing children through this.props
+    // Fix: Access children via this.props which is correctly provided by React.Component inheritance.
     return this.props.children;
   }
 }

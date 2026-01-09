@@ -54,46 +54,50 @@ export class GameEngine {
 
   private getCrossingType(s1: Station, s2: Station, city: City): 'tunnel' | 'bridge' | null {
     if (!isSegmentCrossingWater(s1, s2, city)) return null;
-    // Consistent hash based on world coordinates
     return (s1.x + s1.y > s2.x + s2.y) ? 'tunnel' : 'bridge';
   }
 
   update(currentTime: number) {
-    if (!this.state.gameActive || this.state.isPausedForReward) return;
-    if (this.lastUpdate === 0) {
+    try {
+      if (!this.state.gameActive || this.state.isPausedForReward) return;
+      if (this.lastUpdate === 0) {
+        this.lastUpdate = currentTime;
+        this.lastAuditTime = currentTime;
+        this.lastLogTime = currentTime;
+        this.lastCleanupTime = currentTime;
+        return;
+      }
+
+      if (this.state.stations.length !== this.prevStationCount) {
+        RouteEvaluator.clearCache();
+        this.router.clearCache();
+        this.prevStationCount = this.state.stations.length;
+      }
+
+      const rawDt = currentTime - this.lastUpdate;
       this.lastUpdate = currentTime;
-      this.lastAuditTime = currentTime;
-      this.lastLogTime = currentTime;
-      this.lastCleanupTime = currentTime;
-      return;
-    }
+      const dt = Math.min(rawDt, 100) * this.state.timeScale;
 
-    // Clear RouteEvaluator cache on station count change
-    if (this.state.stations.length !== this.prevStationCount) {
-      RouteEvaluator.clearCache();
-      this.router.clearCache();
-      this.prevStationCount = this.state.stations.length;
-    }
+      this.updateTime(dt);
+      this.updateSpawning(dt);
+      this.updateTrains(dt);
+      this.updateStations(dt, currentTime);
+      this.updateAnimations(currentTime);
+      this.checkFailure();
 
-    const rawDt = currentTime - this.lastUpdate;
-    this.lastUpdate = currentTime;
-    const dt = Math.min(rawDt, 100) * this.state.timeScale;
+      if (currentTime - this.lastAuditTime > 5000) {
+        this.runAudit();
+        this.lastAuditTime = currentTime;
+      }
 
-    this.updateTime(dt);
-    this.updateSpawning(dt);
-    this.updateTrains(dt);
-    this.updateStations(dt, currentTime);
-    this.updateAnimations(currentTime);
-    this.checkFailure();
-
-    if (currentTime - this.lastAuditTime > 5000) {
-      this.runAudit();
-      this.lastAuditTime = currentTime;
-    }
-
-    if (currentTime - this.lastLogTime > 10000) {
-      this.logAnalytics(currentTime);
-      this.lastLogTime = currentTime;
+      if (currentTime - this.lastLogTime > 10000) {
+        this.logAnalytics(currentTime);
+        this.lastLogTime = currentTime;
+      }
+    } catch (e: any) {
+      console.error('[GAME ENGINE CRASH]', e);
+      this.state.gameActive = false;
+      this.state.crashError = e.message || 'Unknown system failure';
     }
   }
 
@@ -127,12 +131,9 @@ export class GameEngine {
   }
 
   updateAnimations(currentTime: number) {
-    // 1. Filter out expired animations (life: 1.2s)
     this.state.scoreAnimations = this.state.scoreAnimations.filter(anim => 
       currentTime - anim.startTime < 1200
     );
-
-    // 2. Strict Performance Cap: Ensure the list does not exceed 100 entries
     if (this.state.scoreAnimations.length > 100) {
       this.state.scoreAnimations.splice(0, this.state.scoreAnimations.length - 100);
     }
@@ -173,25 +174,37 @@ export class GameEngine {
     return Math.max(800, baseRate / levelFactor);
   }
 
-  tryConnectStations(lineIdx: number, startStation: Station, endStation: Station, city: City) {
-    if (startStation.id === endStation.id) return lineIdx;
+  tryConnectStations(lineIdx: number, startStation: Station, endStation: Station, city: City): { success: boolean, error?: string, lineIdx?: number } {
+    if (startStation.id === endStation.id) return { success: false, lineIdx };
+    
     let line = this.state.lines.find(l => l.id === lineIdx);
     
+    // Check line resource if creating a new line
+    if (!line && this.state.mode !== 'CREATIVE' && this.state.resources.lines <= 0) {
+      return { success: false, error: "No lines available", lineIdx };
+    }
+
     const crossingType = this.getCrossingType(startStation, endStation, city);
-    const segment: LineSegment = { from: startStation.id, to: endStation.id, crossing: crossingType };
+    
+    // Check tunnel/bridge resources
+    if (this.state.mode !== 'CREATIVE') {
+      if (crossingType === 'tunnel' && this.state.resources.tunnels <= 0) return { success: false, error: "No tunnels available", lineIdx };
+      if (crossingType === 'bridge' && this.state.resources.bridges <= 0) return { success: false, error: "No bridges available", lineIdx };
+    }
+
+    // Save history before modifying topology
+    this.historyManager.push(this.state.lines);
 
     if (!line) {
-      if (this.state.resources.lines > 0) {
-        line = { 
-          id: lineIdx, 
-          color: THEME.lineColors[lineIdx], 
-          stations: [startStation.id, endStation.id], 
-          segments: [segment],
-          trains: [] 
-        };
-        this.state.lines.push(line);
-        this.addTrainToLine(lineIdx);
-      }
+      line = { 
+        id: lineIdx, 
+        color: THEME.lineColors[lineIdx], 
+        stations: [startStation.id, endStation.id], 
+        segments: [{ from: startStation.id, to: endStation.id, crossing: crossingType }],
+        trains: [] 
+      };
+      this.state.lines.push(line);
+      this.addTrainToLine(lineIdx);
     } else {
       if (line.stations[0] === startStation.id) {
         line.stations.unshift(endStation.id);
@@ -199,32 +212,111 @@ export class GameEngine {
       } else if (line.stations[line.stations.length - 1] === startStation.id) {
         line.stations.push(endStation.id);
         line.segments.push({ from: startStation.id, to: endStation.id, crossing: crossingType });
+      } else {
+        return { success: false, error: "Can only extend from line ends", lineIdx };
       }
     }
+    
     RouteEvaluator.clearCache();
     this.router.clearCache();
-    return lineIdx;
+    return { success: true, lineIdx };
   }
 
   removeSegmentBetween(lineId: number, stationAId: number, stationBId: number) {
     const line = this.state.lines.find(l => l.id === lineId);
     if (!line) return;
+
+    // Save history before modifying topology
+    this.historyManager.push(this.state.lines);
+
     const idxA = line.stations.indexOf(stationAId);
     const idxB = line.stations.indexOf(stationBId);
     if (idxA !== -1 && idxB !== -1 && Math.abs(idxA - idxB) === 1) {
-      // Find segment
       const segIdx = line.segments.findIndex(seg => 
         (seg.from === stationAId && seg.to === stationBId) || 
         (seg.from === stationBId && seg.to === stationAId)
       );
       if (segIdx !== -1) line.segments.splice(segIdx, 1);
-      
-      // Remove station from array
       line.stations.splice(Math.max(idxA, idxB), 1);
     }
-    if (line.stations.length < 2) this.removeLine(lineId);
+    if (line.stations.length < 2) {
+      this.removeLine(lineId);
+    }
     RouteEvaluator.clearCache();
     this.router.clearCache();
+  }
+
+  undo() {
+    const snapshots = this.historyManager.undo(this.state.lines);
+    if (snapshots) {
+      this.restoreLines(snapshots);
+      RouteEvaluator.clearCache();
+      this.router.clearCache();
+      return true;
+    }
+    return false;
+  }
+
+  redo() {
+    const snapshots = this.historyManager.redo(this.state.lines);
+    if (snapshots) {
+      this.restoreLines(snapshots);
+      RouteEvaluator.clearCache();
+      this.router.clearCache();
+      return true;
+    }
+    return false;
+  }
+
+  private restoreLines(snapshots: LineSnapshot[]) {
+    const snapshotIds = new Set(snapshots.map(s => s.id));
+    
+    // Remove lines that don't exist in snapshot
+    this.state.lines = this.state.lines.filter(l => snapshotIds.has(l.id));
+
+    snapshots.forEach(snap => {
+      let line = this.state.lines.find(l => l.id === snap.id);
+      if (!line) {
+        line = {
+          id: snap.id,
+          color: snap.color,
+          stations: [...snap.stations],
+          segments: [...snap.segments],
+          trains: []
+        };
+        this.state.lines.push(line);
+      } else {
+        line.stations = [...snap.stations];
+        line.segments = [...snap.segments];
+      }
+
+      // Sync trains
+      const snapTrainIds = new Set(snap.trains.map(t => t.id));
+      line.trains = line.trains.filter(t => snapTrainIds.has(t.id));
+
+      snap.trains.forEach(snapTrain => {
+        let train = line!.trains.find(t => t.id === snapTrain.id);
+        if (train) {
+          // Restore position but keep existing passengers as requested
+          train.nextStationIndex = snapTrain.nextStationIndex;
+          train.progress = snapTrain.progress;
+          train.direction = snapTrain.direction;
+        } else {
+          // Recreate train if it was deleted
+          train = {
+            id: snapTrain.id,
+            lineId: snap.id,
+            nextStationIndex: snapTrain.nextStationIndex,
+            progress: snapTrain.progress,
+            direction: snapTrain.direction,
+            passengers: [],
+            capacity: 6,
+            wagons: 0
+          };
+          line!.trains.push(train);
+        }
+      });
+    });
   }
 
   updateTrains(dt: number) {
@@ -259,18 +351,15 @@ export class GameEngine {
   }
 
   updateStations(dt: number, currentTime: number) {
-    // 1. Update overflow timers
     this.state.stations.forEach(station => {
       if (station.waitingPassengers.length >= GAME_CONFIG.maxPassengers - 1) station.timer = Math.min(1.0, station.timer + (dt / 40000));
       else station.timer = Math.max(0, station.timer - (dt / 20000));
     });
 
-    // 2. Stranded Passenger Cleanup (every 10s)
     if (currentTime - this.lastCleanupTime > 10000) {
       this.state.stations.forEach(s => {
         s.waitingPassengers = s.waitingPassengers.filter(p => {
           const validLines = RouteEvaluator.findValidLines(s, p.destinationShape, this.state);
-          // If no valid lines AND waited longer than 30s, clear them
           if (validLines.length === 0 && (Date.now() - p.spawnTime > 30000)) {
             return false;
           }
@@ -311,11 +400,17 @@ export class GameEngine {
     this.router.clearCache();
   }
 
-  addTrainToLine(lineId: number) {
+  addTrainToLine(lineId: number): { success: boolean, error?: string } {
     const line = this.state.lines.find(l => l.id === lineId);
     if (line) {
+      if (this.state.mode !== 'CREATIVE' && this.state.resources.trains <= 0) {
+        return { success: false, error: "Build more trains in weekly reward" };
+      }
+      this.historyManager.push(this.state.lines);
       line.trains.push({ id: Math.random(), lineId, nextStationIndex: 1, progress: 0, direction: 1, passengers: [], capacity: 6, wagons: 0 });
+      return { success: true };
     }
+    return { success: false, error: "Line not found" };
   }
 
   removeLine(lineId: number) {
@@ -327,23 +422,37 @@ export class GameEngine {
     }
   }
 
-  addWagonToTrain(lineId: number, trainId: number) {
+  addWagonToTrain(lineId: number, trainId: number): { success: boolean, error?: string } {
     const line = this.state.lines.find(l => l.id === lineId);
     const train = line?.trains.find(t => t.id === trainId);
-    if (train) train.wagons++;
+    if (train) {
+      if (this.state.mode !== 'CREATIVE' && this.state.resources.wagons <= 0) {
+        return { success: false, error: "No wagons available" };
+      }
+      this.historyManager.push(this.state.lines);
+      train.wagons++;
+      return { success: true };
+    }
+    return { success: false, error: "Train not found" };
   }
 
   removeWagonFromTrain(lineId: number, trainId: number) {
     const line = this.state.lines.find(l => l.id === lineId);
     const train = line?.trains.find(t => t.id === trainId);
-    if (train && train.wagons > 0) train.wagons--;
+    if (train && train.wagons > 0) {
+      this.historyManager.push(this.state.lines);
+      train.wagons--;
+    }
   }
 
   removeTrainFromLine(lineId: number, trainId: number) {
     const line = this.state.lines.find(l => l.id === lineId);
     if (line) {
       const idx = line.trains.findIndex(t => t.id === trainId);
-      if (idx !== -1) line.trains.splice(idx, 1);
+      if (idx !== -1) {
+        this.historyManager.push(this.state.lines);
+        line.trains.splice(idx, 1);
+      }
     }
   }
 }

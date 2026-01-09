@@ -122,6 +122,7 @@ export interface GameState {
   passengerIdCounter: number;
   stationIdCounter: number;
   lastSaved?: number;
+  crashError?: string;
 }
 
 export interface SaveData {

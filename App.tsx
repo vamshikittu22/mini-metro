@@ -1,4 +1,4 @@
-import React, { useReducer, useEffect, useRef, useState } from 'react';
+import React, { useReducer, useEffect, useRef, useState, useMemo } from 'react';
 import { GameState, Station, City, Point, GameMode, TransitLine } from './types';
 import { CITIES } from './data/cities';
 import { project } from './services/geometry';
@@ -71,6 +71,60 @@ const App: React.FC = () => {
   const showToast = (msg: string) => {
     setToast({ msg, visible: true });
   };
+
+  const syncStateImmediate = () => {
+    if (engineRef.current) {
+      dispatch({ type: 'UPDATE_GAME', payload: engineRef.current.state });
+    }
+  };
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (view !== 'GAME') return;
+      
+      const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+      const cmdKey = isMac ? e.metaKey : e.ctrlKey;
+
+      if (cmdKey && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) {
+          if (engineRef.current?.redo()) {
+            showToast("System Forward-Sync");
+            syncStateImmediate();
+          }
+        } else {
+          if (engineRef.current?.undo()) {
+            showToast("System Reverted");
+            syncStateImmediate();
+          }
+        }
+      }
+
+      if (e.code === 'Space') {
+        e.preventDefault();
+        if (engineRef.current) {
+          engineRef.current.state.timeScale = engineRef.current.state.timeScale === 0 ? 1 : 0;
+          syncStateImmediate();
+        }
+      }
+
+      if (e.key >= '1' && e.key <= '4') {
+        if (engineRef.current) {
+          const speeds: Record<string, number> = { '1': 1, '2': 2, '3': 4, '4': 0 };
+          engineRef.current.state.timeScale = speeds[e.key];
+          syncStateImmediate();
+        }
+      }
+
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        setActiveLineIdx((prev) => (prev + 1) % 10);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [view, activeLineIdx]);
 
   useEffect(() => {
     const data = PersistenceManager.loadGame();
@@ -190,12 +244,6 @@ const App: React.FC = () => {
     }
   };
 
-  const syncStateImmediate = () => {
-    if (engineRef.current) {
-      dispatch({ type: 'UPDATE_GAME', payload: engineRef.current.state });
-    }
-  };
-
   useEffect(() => {
     if (view !== 'GAME' || !engineRef.current) return;
     const saveInterval = setInterval(() => {
@@ -248,16 +296,46 @@ const App: React.FC = () => {
   }, [camera, isDragging, isPanning, dragStart, dragCurrent, activeLineIdx, currentCity, view]);
 
   const handleLineDelete = () => {
-    if (engineRef.current) { engineRef.current.removeLine(activeLineIdx); syncStateImmediate(); }
+    if (engineRef.current) { 
+      engineRef.current.removeLine(activeLineIdx); 
+      syncStateImmediate(); 
+    }
   };
 
   const handleAddTrain = () => {
-    if (engineRef.current) { engineRef.current.addTrainToLine(activeLineIdx); syncStateImmediate(); }
+    if (engineRef.current) { 
+      const result = engineRef.current.addTrainToLine(activeLineIdx); 
+      if (!result.success && result.error) showToast(result.error);
+      syncStateImmediate(); 
+    }
   };
 
   const handleRemoveTrain = (trainId: number) => {
-    if (engineRef.current) { engineRef.current.removeTrainFromLine(activeLineIdx, trainId); syncStateImmediate(); }
+    if (engineRef.current) { 
+      engineRef.current.removeTrainFromLine(activeLineIdx, trainId); 
+      syncStateImmediate(); 
+    }
   };
+
+  // Memoized data for ResourcePanel
+  const resourceProps = useMemo(() => {
+    if (!uiState) return null;
+    const activeLine = uiState.lines.find(l => l.id === activeLineIdx);
+    return {
+      linesAvailable: uiState.resources.lines,
+      trainsAvailable: uiState.resources.trains,
+      tunnelsAvailable: uiState.resources.tunnels,
+      bridgesAvailable: uiState.resources.bridges,
+      wagonsAvailable: uiState.resources.wagons,
+      activeLineIdx,
+      lineExists: !!activeLine,
+      trainDetails: activeLine ? activeLine.trains.map(t => ({ id: t.id, wagons: t.wagons })) : [],
+      activeLineColor: THEME.lineColors[activeLineIdx],
+      unconnectedCount: uiState.stations.filter(s => !uiState.lines.some(l => l.stations.includes(s.id))).length,
+      totalWaiting: uiState.stations.reduce((acc, s) => acc + s.waitingPassengers.length, 0),
+      hasLineFlags: Array.from({ length: 10 }).map((_, i) => uiState.lines.some(l => l.id === i))
+    };
+  }, [uiState, activeLineIdx]);
 
   if (view === 'MAIN_MENU') {
     return (
@@ -350,20 +428,23 @@ const App: React.FC = () => {
   
               <Stats score={uiState.score} timeScale={uiState.timeScale} onSpeedChange={(s) => { if(engineRef.current) engineRef.current.state.timeScale = s; syncStateImmediate(); }} />
   
-              <ResourcePanel 
-                resources={uiState.resources} 
-                activeLineIdx={activeLineIdx} 
-                onLineIdxChange={setActiveLineIdx} 
-                lines={uiState.lines} 
-                stations={uiState.stations}
-                onAddTrain={handleAddTrain} 
-                onRemoveTrain={handleRemoveTrain}
-                onDeleteLine={handleLineDelete} 
-                onAudit={() => setShowAudit(!showAudit)}
-                onAddWagon={(trainId) => { engineRef.current?.addWagonToTrain(activeLineIdx, trainId); syncStateImmediate(); }}
-                onRemoveWagon={(trainId) => { engineRef.current?.removeWagonFromTrain(activeLineIdx, trainId); syncStateImmediate(); }}
-                onDownload={handleDownloadAnalysis}
-              />
+              {resourceProps && (
+                <ResourcePanel 
+                  {...resourceProps}
+                  onLineIdxChange={setActiveLineIdx} 
+                  onAddTrain={handleAddTrain} 
+                  onRemoveTrain={handleRemoveTrain}
+                  onDeleteLine={handleLineDelete} 
+                  onAudit={() => setShowAudit(!showAudit)}
+                  onAddWagon={(trainId) => { 
+                    const res = engineRef.current?.addWagonToTrain(activeLineIdx, trainId); 
+                    if (res && !res.success && res.error) showToast(res.error);
+                    syncStateImmediate(); 
+                  }}
+                  onRemoveWagon={(trainId) => { engineRef.current?.removeWagonFromTrain(activeLineIdx, trainId); syncStateImmediate(); }}
+                  onDownload={handleDownloadAnalysis}
+                />
+              )}
               <KeyboardHints />
             </>
           )}
@@ -379,6 +460,7 @@ const App: React.FC = () => {
             activeLineIdx={activeLineIdx}
             setActiveLineIdx={setActiveLineIdx}
             syncStateImmediate={syncStateImmediate}
+            showToast={showToast}
             isDragging={isDragging}
             setIsDragging={setIsDragging}
             isPanning={isPanning}
@@ -429,8 +511,8 @@ const App: React.FC = () => {
             </div>
           )}
   
-          {uiState && !uiState.gameActive && (
-            <div className="fixed inset-0 z-[500] flex items-center justify-center bg-black/60 backdrop-blur-md">
+          {uiState && !uiState.gameActive && !uiState.crashError && (
+            <div className="fixed inset-0 z-[500] flex items-center justify-center bg-black/60 backdrop-blur-md text-black">
               <div className="bg-white p-12 max-w-xl w-full border-4 border-black shadow-[20px_20px_0px_0px_rgba(0,0,0,1)] animate-in zoom-in-105">
                 <h2 className="text-5xl font-black uppercase tracking-tighter mb-4 text-black border-b-8 border-black pb-4">System Halted</h2>
                 <p className="text-xl font-black uppercase mb-12 text-black/60 tracking-tight">One of your stations reached critical capacity.</p>
@@ -445,6 +527,26 @@ const App: React.FC = () => {
                   <button onClick={() => { PersistenceManager.clearSave(); setView('CITY_SELECT'); }} className="w-full py-4 bg-white text-black border-4 border-black text-lg font-black uppercase tracking-tighter hover:bg-black hover:text-white transition-colors">Change Region</button>
                   <button onClick={handleDownloadAnalysis} className="w-full py-2 bg-black text-white text-[10px] font-black uppercase">Download Analysis Data</button>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {uiState?.crashError && (
+            <div className="fixed inset-0 z-[600] flex items-center justify-center bg-[#EF3340]/20 backdrop-blur-xl text-black">
+              <div className="bg-white p-12 max-w-2xl w-full border-4 border-black shadow-[24px_24px_0px_0px_rgba(0,0,0,1)] animate-in slide-in-from-bottom-12">
+                <div className="border-b-8 border-black pb-4 mb-8">
+                  <h2 className="text-6xl font-black uppercase tracking-tighter text-[#EF3340]">System Crash</h2>
+                  <span className="text-[10px] font-black uppercase tracking-[0.4em] opacity-40">Critical Engine Exception</span>
+                </div>
+                <div className="bg-black/5 p-6 border-l-8 border-black mb-12 font-mono text-xs overflow-auto max-h-[200px] text-black">
+                  <pre className="whitespace-pre-wrap">{uiState.crashError}</pre>
+                </div>
+                <button 
+                  onClick={() => { PersistenceManager.clearSave(); window.location.reload(); }}
+                  className="w-full py-6 bg-black text-white text-2xl font-black uppercase tracking-widest hover:bg-[#2ECC71] hover:text-black transition-all shadow-[8px_8px_0px_0px_rgba(0,0,0,0.3)] hover:shadow-none hover:translate-x-1 hover:translate-y-1"
+                >
+                  Hard Reset System
+                </button>
               </div>
             </div>
           )}
