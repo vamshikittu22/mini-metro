@@ -112,4 +112,8 @@ export interface GameState {
   passengerTimer: number;
   stationTimer: number;
   analytics: LogEntry[];
+  // Added for Save/Resume continuity
+  passengerIdCounter: number;
+  stationIdCounter: number;
+  lastSaved?: number;
 }

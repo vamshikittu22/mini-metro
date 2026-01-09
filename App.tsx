@@ -42,7 +42,7 @@ const App: React.FC = () => {
   const [, setThrowError] = useState<void>();
   const [isLoading, setIsLoading] = useState(false);
   const [isFadingOut, setIsFadingOut] = useState(false);
-  const [hasSave, setHasSave] = useState(false);
+  const [saveInfo, setSaveInfo] = useState<{ exists: boolean, time?: string }>({ exists: false });
   
   const [toast, setToast] = useState<{ msg: string, visible: boolean }>({ msg: '', visible: false });
 
@@ -58,7 +58,16 @@ const App: React.FC = () => {
   };
 
   useEffect(() => {
-    setHasSave(PersistenceManager.hasSave());
+    const data = PersistenceManager.loadGame();
+    if (data) {
+      const diff = Date.now() - data.timestamp;
+      let timeStr = "recently";
+      if (diff > 3600000) timeStr = `${Math.floor(diff/3600000)}h ago`;
+      else if (diff > 60000) timeStr = `${Math.floor(diff/60000)}m ago`;
+      setSaveInfo({ exists: true, time: timeStr });
+    } else {
+      setSaveInfo({ exists: false });
+    }
   }, [view]);
 
   const initGame = (city: City) => {
@@ -84,6 +93,7 @@ const App: React.FC = () => {
       setSelectedMode(saveData.state.mode);
       setCamera(saveData.camera);
 
+      // Explicitly initialize engine with loaded state including counters
       const engine = new GameEngine(saveData.state);
       engineRef.current = engine;
       setUiState({ ...engine.state });
@@ -92,8 +102,8 @@ const App: React.FC = () => {
       setIsLoading(false);
       setIsFadingOut(true);
       setTimeout(() => setIsFadingOut(false), 500);
-      showToast("Game Resumed");
-    }, 1000);
+      showToast("System Restored");
+    }, 1200);
   };
 
   const startGame = () => {
@@ -137,7 +147,9 @@ const App: React.FC = () => {
         scoreAnimations: [],
         passengerTimer: 0, 
         stationTimer: 0,
-        analytics: []
+        analytics: [],
+        passengerIdCounter: 0,
+        stationIdCounter: 1000
       });
       engineRef.current = engine;
       setUiState({ ...engine.state });
@@ -169,15 +181,16 @@ const App: React.FC = () => {
     if (engineRef.current) setUiState({ ...engineRef.current.state });
   };
 
-  // Autosave loop
+  // Improved autosave loop with status indicator
   useEffect(() => {
     if (view !== 'GAME' || !engineRef.current) return;
 
     const saveInterval = setInterval(() => {
-      if (engineRef.current && engineRef.current.state.gameActive) {
+      if (engineRef.current && engineRef.current.state.gameActive && !engineRef.current.state.isPausedForReward) {
         PersistenceManager.saveGame(engineRef.current.state, camera);
+        showToast("System Sync Completed");
       }
-    }, 10000); // Save every 10 seconds
+    }, 45000); 
 
     return () => clearInterval(saveInterval);
   }, [view, camera]);
@@ -252,7 +265,7 @@ const App: React.FC = () => {
             e.preventDefault();
             if (engineRef.current) {
               PersistenceManager.saveGame(engineRef.current.state, camera);
-              showToast("Manual Save Successful");
+              showToast("Manual State Saved");
             }
           }
           break;
@@ -337,13 +350,13 @@ const App: React.FC = () => {
         <LoadingScreen isFading={!isLoading} />
         <h1 className="text-[120px] font-black tracking-tighter text-white mb-20 leading-none">MINI METRO ▲</h1>
         <div className="flex flex-col gap-4">
-          <MenuBtn icon="→" onClick={() => setView('CITY_SELECT')}>Play</MenuBtn>
+          <MenuBtn icon="→" onClick={() => setView('CITY_SELECT')}>New Connection</MenuBtn>
           <MenuBtn 
             icon="↗" 
-            onClick={hasSave ? resumeGame : undefined} 
-            className={!hasSave ? 'opacity-20 cursor-not-allowed grayscale' : ''}
+            onClick={saveInfo.exists ? resumeGame : undefined} 
+            className={!saveInfo.exists ? 'opacity-20 cursor-not-allowed grayscale' : ''}
           >
-            Resume
+            Resume {saveInfo.time && <span className="text-[16px] lowercase opacity-50 ml-2">({saveInfo.time})</span>}
           </MenuBtn>
           <MenuBtn icon="→" onClick={() => {}}>Daily Challenge</MenuBtn>
           <MenuBtn icon="↓" onClick={() => {}}>Options</MenuBtn>
@@ -392,7 +405,7 @@ const App: React.FC = () => {
              <div className="w-px h-8 bg-[#2ECC71] group-hover:bg-white absolute" />
              <div className="w-8 h-px bg-[#2ECC71] group-hover:bg-white absolute" />
           </div>
-          <span className="text-xl font-black uppercase tracking-[0.4em] group-hover:text-[#2ECC71]">Confirm Connection</span>
+          <span className="text-xl font-black uppercase tracking-[0.4em] group-hover:text-[#2ECC71]">Establish Link</span>
         </div>
       </div>
     );
@@ -410,7 +423,14 @@ const App: React.FC = () => {
                   <div className="bg-black text-white px-2 py-0.5 text-[10px] font-black uppercase rounded-sm">Week {uiState.level}</div>
                 </div>
                 <p className="text-[10px] font-bold uppercase opacity-40 tracking-[0.3em] text-black">{DAYS[Math.floor(uiState.daysElapsed % 7)]}</p>
-                <button onClick={() => setView('CITY_SELECT')} className="text-[9px] font-black uppercase tracking-widest opacity-30 hover:opacity-100 mt-4 text-black text-left">← System Select</button>
+                <div className="flex items-center gap-2 mt-4">
+                  <button onClick={() => {
+                    PersistenceManager.saveGame(engineRef.current!.state, camera);
+                    setView('MAIN_MENU');
+                  }} className="text-[9px] font-black uppercase tracking-widest opacity-30 hover:opacity-100 text-black text-left">← Main Hub</button>
+                  <span className="w-1 h-1 bg-black/10 rounded-full" />
+                  <span className="text-[8px] font-black uppercase opacity-20 tracking-widest text-black">Autosave Active</span>
+                </div>
               </div>
   
               <Stats score={uiState.score} timeScale={uiState.timeScale} onSpeedChange={(s) => { if(engineRef.current) engineRef.current.state.timeScale = s; syncStateImmediate(); }} />

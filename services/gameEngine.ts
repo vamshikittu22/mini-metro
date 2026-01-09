@@ -14,8 +14,6 @@ import { HistoryManager, LineSnapshot } from './historyManager';
 export class GameEngine {
   state: GameState;
   lastUpdate: number = 0;
-  passengerIdCounter: number = 0;
-  stationIdCounter: number = 1000;
   lastAuditTime: number = 0;
   lastLogTime: number = 0;
   simulationHistory: any[] = [];
@@ -27,11 +25,13 @@ export class GameEngine {
     this.state = {
       ...initialState,
       scoreAnimations: [],
-      passengerTimer: 0,
-      stationTimer: 0,
-      analytics: initialState.analytics || []
+      passengerTimer: initialState.passengerTimer || 0,
+      stationTimer: initialState.stationTimer || 0,
+      analytics: initialState.analytics || [],
+      passengerIdCounter: initialState.passengerIdCounter || 0,
+      stationIdCounter: initialState.stationIdCounter || 1000
     };
-    this.state.nextRewardIn = 60000 * 7; 
+    
     this.usedNames = new Set();
     this.state.stations.forEach(s => this.usedNames.add(s.name));
     this.router = new HybridGreedyRouter();
@@ -101,7 +101,6 @@ export class GameEngine {
   }
 
   updateAnimations(currentTime: number) {
-    // Extend life to 1.2s to accommodate easing
     this.state.scoreAnimations = this.state.scoreAnimations.filter(anim => 
       currentTime - anim.startTime < 1200
     );
@@ -182,7 +181,6 @@ export class GameEngine {
       if (totalAvailable <= 0) return lineIdx;
     }
 
-    // Capture state before modification
     this.historyManager.push(this.state.lines);
 
     if (!line) {
@@ -193,7 +191,6 @@ export class GameEngine {
           this.state.lines.push(line);
           this.addTrainToLine(lineIdx);
         } else {
-            // Revert history if we failed to create line
             this.historyManager.undo(this.state.lines);
             return lineIdx;
         }
@@ -237,7 +234,6 @@ export class GameEngine {
     const idxB = line.stations.indexOf(stationBId);
     if (idxA === -1 || idxB === -1 || Math.abs(idxA - idxB) !== 1) return;
 
-    // Capture state before modification
     this.historyManager.push(this.state.lines);
 
     const city = CITIES.find(c => c.id === this.state.cityId) || CITIES[0];
@@ -277,7 +273,7 @@ export class GameEngine {
     }
 
     if (line.stations.length < 2) {
-      this.removeLine(lineId, false); // Don't record history here, we already did
+      this.removeLine(lineId, false);
     }
     
     InventoryManager.validateInventory(this.state, city);
@@ -294,26 +290,17 @@ export class GameEngine {
     });
   }
 
-  /**
-   * Comprehensive handler for train station stops using the HybridGreedyRouter.
-   * Processes Alighting, Boarding, and Stranded checks.
-   */
   handleTrainAtStation(train: Train, line: TransitLine) {
     const stationId = line.stations[train.nextStationIndex];
     const station = this.state.stations.find(s => s.id === stationId);
     if (!station) return;
 
-    // --- PHASE 1: ALIGHT PASSENGERS ---
     train.passengers = train.passengers.filter(p => {
       const decision = this.router.shouldPassengerAlight(p, station, train, this.state);
       
       if (decision.action === 'DELIVER') {
         this.state.score++;
-        
-        // Calculate transfers: history length - 1 (initial board). Default to 0 if history missing.
         const transferCount = (p.boardingHistory?.length || 1) - 1;
-        
-        // Add minimal jitter to stacking animations so they don't perfectly overlap
         const jitterX = (Math.random() * 16) - 8;
         const jitterY = (Math.random() * 16) - 8;
 
@@ -324,17 +311,16 @@ export class GameEngine {
           startTime: Date.now(),
           transferCount: Math.max(0, transferCount)
         });
-        return false; // Remove from train
+        return false;
       } else if (decision.action === 'TRANSFER') {
         this.router.resetWaitTimer(p);
         p.currentStationId = station.id;
         station.waitingPassengers.push(p);
-        return false; // Remove from train
+        return false;
       }
-      return true; // Stay on train (action === 'STAY')
+      return true;
     });
 
-    // --- PHASE 2: BOARD PASSENGERS ---
     const totalCapacity = GAME_CONFIG.trainCapacity * (1 + train.wagons);
     let availableSpace = totalCapacity - train.passengers.length;
     
@@ -354,7 +340,7 @@ export class GameEngine {
             });
             train.passengers.push(p);
             availableSpace--;
-            continue; // Passenger boarded, don't add to stillWaiting
+            continue;
           }
         }
         stillWaiting.push(p);
@@ -362,20 +348,12 @@ export class GameEngine {
       station.waitingPassengers = stillWaiting;
     }
 
-    // --- PHASE 3: CHECK STRANDED PASSENGERS ---
     station.waitingPassengers = station.waitingPassengers.filter(p => {
       const isStranded = this.router.isPassengerStranded(p, station, this.state);
-      if (isStranded) {
-        if (this.state.mode !== 'CREATIVE') {
-          console.warn(`[ROUTING] Passenger ${p.id} removed from ${station.name} - no valid path to ${p.destinationShape}`);
-        }
-        return false; // Remove stranded passenger
-      }
-      return true; // Keep
+      if (isStranded) return false;
+      return true;
     });
 
-    // --- TRAIN PROGRESSION ---
-    // Advance next station index based on current direction
     if (train.direction === 1) {
       if (train.nextStationIndex === line.stations.length - 1) {
         train.direction = -1;
@@ -441,8 +419,10 @@ export class GameEngine {
     const start = this.state.stations[Math.floor(Math.random() * this.state.stations.length)];
     const types = Array.from(new Set(this.state.stations.map(s => s.type))).filter(t => t !== start.type);
     if (types.length === 0) return;
+    
+    const id = this.state.passengerIdCounter++;
     const p: Passenger = { 
-      id: this.passengerIdCounter++, 
+      id, 
       currentStationId: start.id,
       destinationShape: types[Math.floor(Math.random() * types.length)] as StationType, 
       spawnTime: Date.now() 
@@ -489,8 +469,9 @@ export class GameEngine {
       if (inWater && !allowWaterSpawn) continue;
 
       if (this.state.stations.every(s => getDistance(s, pos) > 190)) {
+        const id = this.state.stationIdCounter++;
         this.state.stations.push({ 
-          id: this.stationIdCounter++, 
+          id, 
           type: types[Math.floor(Math.random() * types.length)], 
           name: this.getUniqueName(this.state.cityId), 
           x: pos.x, 
@@ -587,19 +568,16 @@ export class GameEngine {
   }
 
   private restoreLines(snapshot: LineSnapshot[]) {
-    // Map existing trains to keep them if possible (Preserve train state)
     const trainMap = new Map<number, Train[]>();
     this.state.lines.forEach(l => trainMap.set(l.id, l.trains));
 
-    // Rebuild lines from snapshot
     this.state.lines = snapshot.map(snap => {
       let existingTrains = trainMap.get(snap.id) || [];
       
-      // Safety check: ensure trains on restored/modified lines have valid indices
       existingTrains.forEach(t => {
         if (t.nextStationIndex >= snap.stations.length) {
           t.nextStationIndex = Math.max(0, snap.stations.length - 1);
-          t.progress = 0; // Reset progress if route changed significantly
+          t.progress = 0;
         }
       });
       
@@ -611,7 +589,6 @@ export class GameEngine {
       };
     });
 
-    // Recalculate inventory
     const city = CITIES.find(c => c.id === this.state.cityId) || CITIES[0];
     InventoryManager.validateInventory(this.state, city);
     RouteEvaluator.clearCache();
