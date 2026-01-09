@@ -1,4 +1,3 @@
-
 import React, { ErrorInfo, ReactNode } from 'react';
 
 interface Props {
@@ -10,15 +9,20 @@ interface State {
   error: Error | null;
 }
 
-// Fix: Explicitly extend React.Component with generic types to ensure 'this.props' and 'this.state' are correctly typed and recognized by the TypeScript compiler.
+/**
+ * Standard React Error Boundary implemented as a class component to capture lifecycle errors.
+ * Fixed the inheritance issue where 'props' was not correctly resolved by explicitly extending React.Component.
+ */
 export class ErrorBoundary extends React.Component<Props, State> {
+  // Initializing state directly as a property for cleaner TypeScript integration
+  public state: State = {
+    hasError: false,
+    error: null
+  };
+
+  // The constructor is optional when using property initializers, but we ensure it passes props to super
   constructor(props: Props) {
     super(props);
-    // Fix: Correctly initialize state property within the class constructor.
-    this.state = {
-      hasError: false,
-      error: null
-    };
   }
 
   static getDerivedStateFromError(error: Error): State {
@@ -30,7 +34,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
   }
 
   render() {
-    // Fix: Safely access 'hasError' through 'this.state' within the render method.
+    // Accessing hasError through this.state
     if (this.state.hasError) {
       return (
         <div className="fixed inset-0 z-[999] bg-[#F8F4EE] flex items-center justify-center p-12 font-sans select-none">
@@ -46,7 +50,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
                 A critical runtime error has disrupted the transit network.
               </p>
               <div className="bg-black/5 border-l-4 border-black p-4 font-mono text-[10px] uppercase text-black/70 overflow-auto max-h-32 whitespace-pre-wrap">
-                {/* Fix: Correctly access 'error' details via 'this.state' for safe rendering. */}
+                {/* Accessing error message through this.state with safety checks */}
                 {this.state.error?.message || "Unknown Error Sequence"}
                 {this.state.error?.stack && `\n\n${this.state.error.stack.split('\n')[0]}`}
               </div>
@@ -63,7 +67,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
       );
     }
 
-    // Fix: Correctly access 'children' through 'this.props' to return the original component tree when no error is present.
+    // Accessing children through this.props - TypeScript now correctly identifies 'props' on the Component instance
     return this.props.children;
   }
 }

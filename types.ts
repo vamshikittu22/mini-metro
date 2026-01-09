@@ -1,4 +1,3 @@
-
 export type StationType = 'circle' | 'square' | 'triangle' | 'pentagon' | 'star';
 export type GameMode = 'NORMAL' | 'EXTREME' | 'ENDLESS' | 'CREATIVE';
 
@@ -32,10 +31,17 @@ export interface Passenger {
   boardingHistory?: Array<{lineId: number, stationId: number, timestamp: number}>;
 }
 
+export interface LineSegment {
+  from: number;
+  to: number;
+  crossing: 'tunnel' | 'bridge' | null;
+}
+
 export interface TransitLine {
   id: number;
   color: string;
   stations: number[];
+  segments: LineSegment[];
   trains: Train[];
 }
 
@@ -116,4 +122,11 @@ export interface GameState {
   passengerIdCounter: number;
   stationIdCounter: number;
   lastSaved?: number;
+}
+
+// Fix: Added missing SaveData interface to support system persistence and workers
+export interface SaveData {
+  state: GameState;
+  camera: { x: number; y: number; scale: number };
+  timestamp: number;
 }
