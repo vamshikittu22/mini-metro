@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { GameState, Station, City, Point, GameMode, LogEntry } from './types';
 import { CITIES } from './data/cities';
@@ -16,6 +17,7 @@ import { GameCanvas } from './components/GameCanvas';
 import { KeyboardHints } from './components/HUD/KeyboardHints';
 import { MobileWarning } from './components/MobileWarning';
 import { Toast } from './components/UI/Toast';
+import { PersistenceManager, SaveData } from './services/persistenceManager';
 
 type AppView = 'MAIN_MENU' | 'CITY_SELECT' | 'MODE_SELECT' | 'GAME';
 
@@ -40,6 +42,7 @@ const App: React.FC = () => {
   const [, setThrowError] = useState<void>();
   const [isLoading, setIsLoading] = useState(false);
   const [isFadingOut, setIsFadingOut] = useState(false);
+  const [hasSave, setHasSave] = useState(false);
   
   const [toast, setToast] = useState<{ msg: string, visible: boolean }>({ msg: '', visible: false });
 
@@ -54,6 +57,10 @@ const App: React.FC = () => {
     setToast({ msg, visible: true });
   };
 
+  useEffect(() => {
+    setHasSave(PersistenceManager.hasSave());
+  }, [view]);
+
   const initGame = (city: City) => {
     setCurrentCity(city);
     setView('MODE_SELECT');
@@ -63,10 +70,35 @@ const App: React.FC = () => {
     if (currentCity) startGame();
   };
 
+  const resumeGame = () => {
+    const saveData = PersistenceManager.loadGame();
+    if (!saveData) {
+      showToast("No save data found.");
+      return;
+    }
+
+    setIsLoading(true);
+    setTimeout(() => {
+      const city = CITIES.find(c => c.id === saveData.state.cityId) || CITIES[0];
+      setCurrentCity(city);
+      setSelectedMode(saveData.state.mode);
+      setCamera(saveData.camera);
+
+      const engine = new GameEngine(saveData.state);
+      engineRef.current = engine;
+      setUiState({ ...engine.state });
+      
+      setView('GAME');
+      setIsLoading(false);
+      setIsFadingOut(true);
+      setTimeout(() => setIsFadingOut(false), 500);
+      showToast("Game Resumed");
+    }, 1000);
+  };
+
   const startGame = () => {
     if (!currentCity) return;
     
-    // Start Loading Sequence
     setIsLoading(true);
 
     setTimeout(() => {
@@ -75,7 +107,6 @@ const App: React.FC = () => {
         return { ...pos, id: s.id, type: s.type, name: s.name, waitingPassengers: [], timer: 0 };
       });
       
-      // Scale initial inventory with city difficulty (e.g. difficulty 1.8 -> + ~90% bonus)
       const scaleFactor = 1 + (currentCity.difficulty * 0.5);
       const initialInventory = { 
         lines: Math.ceil(GAME_CONFIG.baseResources.lines * scaleFactor), 
@@ -121,12 +152,11 @@ const App: React.FC = () => {
       
       setView('GAME');
       
-      // End Loading Sequence (Trigger Fade Out)
       setIsLoading(false);
       setIsFadingOut(true);
       setTimeout(() => setIsFadingOut(false), 500);
 
-    }, 2000); // 2-second synthetic delay
+    }, 2000);
   };
 
   const handleDownloadAnalysis = () => {
@@ -139,11 +169,23 @@ const App: React.FC = () => {
     if (engineRef.current) setUiState({ ...engineRef.current.state });
   };
 
+  // Autosave loop
+  useEffect(() => {
+    if (view !== 'GAME' || !engineRef.current) return;
+
+    const saveInterval = setInterval(() => {
+      if (engineRef.current && engineRef.current.state.gameActive) {
+        PersistenceManager.saveGame(engineRef.current.state, camera);
+      }
+    }, 10000); // Save every 10 seconds
+
+    return () => clearInterval(saveInterval);
+  }, [view, camera]);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (view !== 'GAME' || !engineRef.current) return;
 
-      // Handle Undo/Redo
       if ((e.metaKey || e.ctrlKey) && e.code === 'KeyZ') {
         e.preventDefault();
         if (e.shiftKey) {
@@ -205,6 +247,15 @@ const App: React.FC = () => {
              rendererRef.current.toggleDebug();
           }
           break;
+        case 'KeyS':
+          if ((e.metaKey || e.ctrlKey)) {
+            e.preventDefault();
+            if (engineRef.current) {
+              PersistenceManager.saveGame(engineRef.current.state, camera);
+              showToast("Manual Save Successful");
+            }
+          }
+          break;
         case 'Escape':
           e.preventDefault();
           if (showStrategist) setShowStrategist(false);
@@ -222,7 +273,7 @@ const App: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [view, showStrategist, showAudit]);
+  }, [view, showStrategist, showAudit, camera]);
 
   useEffect(() => {
     const handleResize = () => setDimensions({ width: window.innerWidth, height: window.innerHeight });
@@ -283,10 +334,17 @@ const App: React.FC = () => {
   if (view === 'MAIN_MENU') {
     return (
       <div className="fixed inset-0 bg-[#1A1A1A] flex flex-col items-start justify-center p-24 select-none">
+        <LoadingScreen isFading={!isLoading} />
         <h1 className="text-[120px] font-black tracking-tighter text-white mb-20 leading-none">MINI METRO ▲</h1>
         <div className="flex flex-col gap-4">
           <MenuBtn icon="→" onClick={() => setView('CITY_SELECT')}>Play</MenuBtn>
-          <MenuBtn icon="↗" onClick={() => {}}>Resume</MenuBtn>
+          <MenuBtn 
+            icon="↗" 
+            onClick={hasSave ? resumeGame : undefined} 
+            className={!hasSave ? 'opacity-20 cursor-not-allowed grayscale' : ''}
+          >
+            Resume
+          </MenuBtn>
           <MenuBtn icon="→" onClick={() => {}}>Daily Challenge</MenuBtn>
           <MenuBtn icon="↓" onClick={() => {}}>Options</MenuBtn>
           <MenuBtn icon="↙" onClick={() => {}}>Exit</MenuBtn>
@@ -457,7 +515,7 @@ const App: React.FC = () => {
                     Re-Initialize Network
                   </button>
                   <button 
-                    onClick={() => setView('CITY_SELECT')}
+                    onClick={() => { PersistenceManager.clearSave(); setView('CITY_SELECT'); }}
                     className="w-full py-4 bg-white text-black border-4 border-black text-lg font-black uppercase tracking-tighter hover:bg-black hover:text-white transition-colors"
                   >
                     Change Region
@@ -487,8 +545,8 @@ const StatCard = ({ label, val }: { label: string, val: number | string }) => (
   </div>
 );
 
-const MenuBtn = ({ children, icon, onClick }: any) => (
-  <div onClick={onClick} className="flex items-center gap-6 group cursor-pointer">
+const MenuBtn = ({ children, icon, onClick, className = '' }: any) => (
+  <div onClick={onClick} className={`flex items-center gap-6 group cursor-pointer ${className}`}>
     <span className="text-white/40 text-3xl font-black group-hover:text-blue-400">{icon}</span>
     <div className="bg-blue-600 px-8 py-3 group-hover:bg-white group-hover:text-black transition-all">
       <span className="text-4xl font-black text-white group-hover:text-black uppercase tracking-tighter">{children}</span>
