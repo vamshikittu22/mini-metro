@@ -295,7 +295,8 @@ const App: React.FC = () => {
     return () => cancelAnimationFrame(fId);
   }, [camera, isDragging, isPanning, dragStart, dragCurrent, activeLineIdx, currentCity, view]);
 
-  const handleLineDelete = () => {
+  // Fix: Rename handleLineDelete to handleDeleteLine to match prop name used in ResourcePanel
+  const handleDeleteLine = () => {
     if (engineRef.current) { 
       engineRef.current.removeLine(activeLineIdx); 
       syncStateImmediate(); 
@@ -340,7 +341,7 @@ const App: React.FC = () => {
   if (view === 'MAIN_MENU') {
     return (
       <div className="fixed inset-0 bg-[#1A1A1A] flex flex-col items-start justify-center p-24 select-none">
-        <LoadingScreen isFading={!isLoading} />
+        <LoadingScreen isLoading={isLoading} />
         <h1 className="text-[120px] font-black tracking-tighter text-white mb-20 leading-none">MINI METRO ▲</h1>
         <div className="flex flex-col gap-4">
           <MenuBtn icon="→" onClick={() => setView('CITY_SELECT')}>New Connection</MenuBtn>
@@ -434,7 +435,7 @@ const App: React.FC = () => {
                   onLineIdxChange={setActiveLineIdx} 
                   onAddTrain={handleAddTrain} 
                   onRemoveTrain={handleRemoveTrain}
-                  onDeleteLine={handleLineDelete} 
+                  onDeleteLine={handleDeleteLine} 
                   onAudit={() => setShowAudit(!showAudit)}
                   onAddWagon={(trainId) => { 
                     const res = engineRef.current?.addWagonToTrain(activeLineIdx, trainId); 

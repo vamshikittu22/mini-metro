@@ -120,10 +120,16 @@ export class GameEngine {
     this.state.passengerTimer += dt;
     this.state.stationTimer += dt;
     const spawnRate = this.getDynamicSpawnRate();
+    
+    // Batch spawn passengers to catch up with time-scale or frame drops
     if (this.state.passengerTimer >= spawnRate) {
-      this.spawnPassenger();
-      this.state.passengerTimer = 0;
+      const count = Math.floor(this.state.passengerTimer / spawnRate);
+      for (let i = 0; i < count; i++) {
+        this.spawnPassenger();
+      }
+      this.state.passengerTimer %= spawnRate;
     }
+
     if (this.state.stationTimer >= GAME_CONFIG.stationSpawnRate) {
       this.spawnStation();
       this.state.stationTimer = 0;
