@@ -81,6 +81,7 @@ export interface City {
     maxLon: number;
   };
   water: { lat: number; lon: number }[][];
+  waterProjected?: Point[][];
   initialStations: { id: number; type: StationType; lat: number; lon: number; name: string }[];
   difficulty: number;
 }
@@ -118,13 +119,11 @@ export interface GameState {
   passengerTimer: number;
   stationTimer: number;
   analytics: LogEntry[];
-  // Added for Save/Resume continuity
   passengerIdCounter: number;
   stationIdCounter: number;
   lastSaved?: number;
 }
 
-// Fix: Added missing SaveData interface to support system persistence and workers
 export interface SaveData {
   state: GameState;
   camera: { x: number; y: number; scale: number };

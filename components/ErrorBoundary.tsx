@@ -1,4 +1,4 @@
-import React, { ErrorInfo, ReactNode } from 'react';
+import React, { Component, ErrorInfo, ReactNode } from 'react';
 
 interface Props {
   children?: ReactNode;
@@ -11,19 +11,13 @@ interface State {
 
 /**
  * Standard React Error Boundary implemented as a class component to capture lifecycle errors.
- * Fixed the inheritance issue where 'props' was not correctly resolved by explicitly extending React.Component.
  */
-export class ErrorBoundary extends React.Component<Props, State> {
+export class ErrorBoundary extends Component<Props, State> {
   // Initializing state directly as a property for cleaner TypeScript integration
   public state: State = {
     hasError: false,
     error: null
   };
-
-  // The constructor is optional when using property initializers, but we ensure it passes props to super
-  constructor(props: Props) {
-    super(props);
-  }
 
   static getDerivedStateFromError(error: Error): State {
     return { hasError: true, error };
@@ -67,7 +61,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
       );
     }
 
-    // Accessing children through this.props - TypeScript now correctly identifies 'props' on the Component instance
+    // Accessing children through this.props
     return this.props.children;
   }
 }

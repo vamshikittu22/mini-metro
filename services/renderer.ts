@@ -43,6 +43,42 @@ export class Renderer {
     console.log(`[RENDERER] Debug Mode: ${this.debugMode ? 'ON' : 'OFF'}`);
   }
 
+  private isInViewport(x: number, y: number, radius: number, camera: { x: number, y: number, scale: number }): boolean {
+    const screenX = x * camera.scale + camera.x;
+    const screenY = y * camera.scale + camera.y;
+    const screenR = radius * camera.scale;
+
+    return (
+      screenX + screenR > 0 &&
+      screenX - screenR < this.canvas.width &&
+      screenY + screenR > 0 &&
+      screenY - screenR < this.canvas.height
+    );
+  }
+
+  private isPolygonInViewport(poly: Point[], camera: { x: number, y: number, scale: number }): boolean {
+    if (poly.length === 0) return false;
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const p of poly) {
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+    }
+
+    const screenMinX = minX * camera.scale + camera.x;
+    const screenMaxX = maxX * camera.scale + camera.x;
+    const screenMinY = minY * camera.scale + camera.y;
+    const screenMaxY = maxY * camera.scale + camera.y;
+
+    return (
+      screenMaxX > 0 &&
+      screenMinX < this.canvas.width &&
+      screenMaxY > 0 &&
+      screenMinY < this.canvas.height
+    );
+  }
+
   draw(
     state: GameState, 
     camera: { x: number, y: number, scale: number }, 
@@ -134,14 +170,18 @@ export class Renderer {
     ctx.fillStyle = THEME.water;
     ctx.strokeStyle = '#BDD1E0';
     ctx.lineWidth = 2 / camera.scale;
-    currentCity.water.forEach(poly => {
+
+    // Use pre-computed water polygons if available
+    const waterPolys = currentCity.waterProjected || currentCity.water.map(poly => poly.map(pt => project(pt.lat, pt.lon, currentCity)));
+    waterPolys.forEach(poly => {
       if (poly.length < 2) return;
+      // Viewport culling for water
+      if (!this.isPolygonInViewport(poly, camera)) return;
+
       ctx.beginPath();
-      const p0 = project(poly[0].lat, poly[0].lon, currentCity);
-      ctx.moveTo(p0.x, p0.y);
+      ctx.moveTo(poly[0].x, poly[0].y);
       poly.forEach(pt => {
-        const p = project(pt.lat, pt.lon, currentCity);
-        ctx.lineTo(p.x, p.y);
+        ctx.lineTo(pt.x, pt.y);
       });
       ctx.closePath();
       ctx.fill();
@@ -149,8 +189,9 @@ export class Renderer {
     });
 
     const zoomComp = 1 / Math.pow(camera.scale, 0.8);
-    const dynamicStationSize = THEME.stationSize * zoomComp;
-    const dynamicTextSize = 13 * zoomComp;
+    // Clamp text and station sizes
+    const dynamicStationSize = Math.max(12, THEME.stationSize * zoomComp);
+    const dynamicTextSize = Math.max(8, 13 * zoomComp);
     const dynamicLineWidth = THEME.lineWidth * Math.pow(camera.scale, 0.2);
 
     lines.forEach(line => {
@@ -161,9 +202,11 @@ export class Renderer {
         const sB = stations.find(s => s.id === sBId);
         
         if (sA && sB) {
+          // Viewport culling for segments
+          const segRadius = Math.max(getDistance(sA, sB), dynamicLineWidth);
+          if (!this.isInViewport((sA.x + sB.x) / 2, (sA.y + sB.y) / 2, segRadius, camera)) continue;
+
           const path = [sA, ...getBentPath(sA, sB)];
-          
-          // Use stored segments for deterministic crossing visualization
           const segment = line.segments?.find(seg => 
             (seg.from === sAId && seg.to === sBId) || (seg.from === sBId && seg.to === sAId)
           );
@@ -192,6 +235,9 @@ export class Renderer {
     });
 
     stations.forEach(s => {
+      // Viewport culling for stations
+      if (!this.isInViewport(s.x, s.y, dynamicStationSize * 2, camera)) return;
+
       this.drawStationShape(ctx, s.x, s.y, dynamicStationSize, s.type, true, 2.5 * zoomComp, THEME.stationStroke);
       ctx.fillStyle = THEME.text; 
       ctx.font = `900 ${dynamicTextSize}px Inter`; 
@@ -210,7 +256,7 @@ export class Renderer {
     ctx.scale(camera.scale, camera.scale);
 
     const zoomComp = 1 / Math.pow(camera.scale, 0.8);
-    const dynamicStationSize = THEME.stationSize * zoomComp;
+    const dynamicStationSize = Math.max(12, THEME.stationSize * zoomComp);
 
     lines.forEach(line => {
       line.trains.forEach(train => {
@@ -223,6 +269,10 @@ export class Renderer {
           const ty = fromS.y + (toS.y - fromS.y) * train.progress;
           const tW = THEME.trainWidth * zoomComp;
           const tH = THEME.trainHeight * zoomComp;
+
+          // Culling for trains
+          if (!this.isInViewport(tx, ty, Math.max(tW, tH), camera)) return;
+
           ctx.fillStyle = THEME.text;
           ctx.fillRect(tx - tW/2, ty - tH/2, tW, tH);
         }
@@ -234,6 +284,10 @@ export class Renderer {
       const spacing = pSize + (3 * zoomComp);
       const gridX = s.x + dynamicStationSize + (8 * zoomComp);
       const gridY = s.y - dynamicStationSize;
+
+      // Culling for station dynamics
+      if (!this.isInViewport(s.x, s.y, dynamicStationSize * 5, camera)) return;
+
       const visibleCount = Math.min(s.waitingPassengers.length, 8);
       for (let i = 0; i < visibleCount; i++) {
         const p = s.waitingPassengers[i];
@@ -254,10 +308,13 @@ export class Renderer {
       const elapsed = Date.now() - anim.startTime;
       const t = Math.min(1, elapsed / 1200);
       const opacity = t > 0.7 ? 1 - ((t - 0.7) / 0.3) : 1;
+      
+      if (!this.isInViewport(anim.x, anim.y, 100, camera)) return;
+
       ctx.save();
       ctx.globalAlpha = opacity;
       ctx.fillStyle = '#2ECC71';
-      ctx.font = `900 ${18 * zoomComp}px Inter`;
+      ctx.font = `900 ${Math.max(8, 18 * zoomComp)}px Inter`;
       ctx.fillText('+1', anim.x, anim.y - (t * 50));
       ctx.restore();
     });
@@ -279,7 +336,7 @@ export class Renderer {
   private calculateCurrentDynamicBounds(state: GameState, camera: { x: number, y: number, scale: number }, dragging: any, overlay?: any): Rect[] {
     const rects: Rect[] = [];
     const zoomComp = 1 / Math.pow(camera.scale, 0.8);
-    const stationSize = (THEME.stationSize * zoomComp) * 5; 
+    const stationSize = (Math.max(12, THEME.stationSize * zoomComp)) * 5; 
     const trainSize = (THEME.trainWidth * zoomComp) * 4; 
     const worldToScreen = (wx: number, wy: number) => ({
       x: (wx * camera.scale) + camera.x,
@@ -334,7 +391,9 @@ export class Renderer {
           const angle = (i * 2 * Math.PI) / 5 - Math.PI / 2;
           ctx.lineTo(x + Math.cos(angle) * r, y + Math.sin(angle) * r);
         }
-        ctx.closePath(); break;
+        // Removed 'with' block to resolve strict mode errors
+        ctx.closePath();
+        break;
       }
       case 'star': {
         const outer = size * 1.5, inner = size * 0.7;

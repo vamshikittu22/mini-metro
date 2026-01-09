@@ -1,4 +1,3 @@
-
 import React, { useReducer, useEffect, useRef, useState } from 'react';
 import { GameState, Station, City, Point, GameMode, TransitLine } from './types';
 import { CITIES } from './data/cities';
@@ -31,7 +30,6 @@ type GameAction =
 function gameReducer(state: GameState | null, action: GameAction): GameState | null {
   switch (action.type) {
     case 'UPDATE_GAME':
-      // Create a new reference for the UI state to trigger React re-render correctly
       return { ...action.payload };
     case 'SYNC_TRAINS':
       return state ? { ...state, lines: action.payload } : null;
@@ -106,7 +104,11 @@ const App: React.FC = () => {
     setIsLoading(true);
     setTimeout(() => {
       const city = CITIES.find(c => c.id === saveData.state.cityId) || CITIES[0];
-      setCurrentCity(city);
+      const cityWithProjectedWater = {
+        ...city,
+        waterProjected: city.water.map(poly => poly.map(pt => project(pt.lat, pt.lon, city)))
+      };
+      setCurrentCity(cityWithProjectedWater);
       setSelectedMode(saveData.state.mode);
       setCamera(saveData.camera);
 
@@ -127,12 +129,18 @@ const App: React.FC = () => {
     setIsLoading(true);
 
     setTimeout(() => {
-      const initialStations: Station[] = currentCity.initialStations.map(s => {
-        const pos = project(s.lat, s.lon, currentCity);
+      const cityWithProjectedWater = {
+        ...currentCity,
+        waterProjected: currentCity.water.map(poly => poly.map(pt => project(pt.lat, pt.lon, currentCity)))
+      };
+      setCurrentCity(cityWithProjectedWater);
+
+      const initialStations: Station[] = cityWithProjectedWater.initialStations.map(s => {
+        const pos = project(s.lat, s.lon, cityWithProjectedWater);
         return { ...pos, id: s.id, type: s.type, name: s.name, waitingPassengers: [], timer: 0 };
       });
       
-      const scaleFactor = 1 + (currentCity.difficulty * 0.5);
+      const scaleFactor = 1 + (cityWithProjectedWater.difficulty * 0.5);
       const initialInventory = { 
         lines: Math.ceil(GAME_CONFIG.baseResources.lines * scaleFactor), 
         trains: Math.ceil(GAME_CONFIG.baseResources.trains * scaleFactor), 
@@ -142,7 +150,7 @@ const App: React.FC = () => {
       };
 
       const engine = new GameEngine({
-        cityId: currentCity.id, 
+        cityId: cityWithProjectedWater.id, 
         mode: selectedMode, 
         stations: initialStations, 
         lines: [], 
