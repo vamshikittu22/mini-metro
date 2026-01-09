@@ -1,3 +1,4 @@
+
 import React, { Component, ErrorInfo, ReactNode } from 'react';
 
 interface Props {
@@ -9,19 +10,15 @@ interface State {
   error: Error | null;
 }
 
-/**
- * Standard React Error Boundary implemented as a class component to capture lifecycle errors.
- */
-// Fix: Use Component from 'react' explicitly to ensure correct inheritance recognition.
+// Fix: Inheriting from Component with generic types to ensure state and props are correctly resolved by TypeScript
 export class ErrorBoundary extends Component<Props, State> {
-  // Fix: Declare and initialize state as a class property without override keyword to ensure compatibility.
-  public state: State = {
-    hasError: false,
-    error: null
-  };
-
   constructor(props: Props) {
     super(props);
+    // Initializing state within constructor
+    this.state = {
+      hasError: false,
+      error: null
+    };
   }
 
   static getDerivedStateFromError(error: Error): State {
@@ -33,7 +30,7 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   render() {
-    // Fix: State is now correctly inherited and typed.
+    // Accessing hasError through this.state
     if (this.state.hasError) {
       return (
         <div className="fixed inset-0 z-[999] bg-[#F8F4EE] flex items-center justify-center p-12 font-sans select-none">
@@ -49,7 +46,7 @@ export class ErrorBoundary extends Component<Props, State> {
                 A critical runtime error has disrupted the transit network.
               </p>
               <div className="bg-black/5 border-l-4 border-black p-4 font-mono text-[10px] uppercase text-black/70 overflow-auto max-h-32 whitespace-pre-wrap">
-                {/* Fix: Safely access error message from state */}
+                {/* Accessing error message and stack through this.state */}
                 {this.state.error?.message || "Unknown Error Sequence"}
                 {this.state.error?.stack && `\n\n${this.state.error.stack.split('\n')[0]}`}
               </div>
@@ -66,7 +63,7 @@ export class ErrorBoundary extends Component<Props, State> {
       );
     }
 
-    // Fix: Access children via this.props which is correctly provided by Component inheritance.
+    // Accessing children through this.props
     return this.props.children;
   }
 }

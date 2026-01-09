@@ -1,5 +1,6 @@
 import { GameState, City, StationType } from '../types';
 import { InventoryManager } from './inventoryManager';
+import { isSegmentCrossingWater } from './geometry';
 import { RouteEvaluator } from './pathfinding/RouteEvaluator';
 
 export class SystemValidator {
@@ -19,15 +20,26 @@ export class SystemValidator {
       bridges: 0,
     };
 
+    let waterCrossings = 0;
+
     state.lines.forEach(line => {
       active.trains += line.trains.length;
       active.wagons += line.trains.reduce((sum, t) => sum + t.wagons, 0);
       
-      line.segments?.forEach(seg => {
-        if (seg.crossing === 'tunnel') active.tunnels++;
-        if (seg.crossing === 'bridge') active.bridges++;
-      });
+      for (let i = 0; i < line.stations.length - 1; i++) {
+        const s1 = state.stations.find(s => s.id === line.stations[i]);
+        const s2 = state.stations.find(s => s.id === line.stations[i + 1]);
+        if (s1 && s2 && isSegmentCrossingWater(s1, s2, city)) {
+          waterCrossings++;
+        }
+      }
     });
+
+    // Allocate resources to crossings using the same shared pool logic as InventoryManager
+    let remainingCrossings = waterCrossings;
+    active.tunnels = Math.min(remainingCrossings, state.totalResources.tunnels);
+    remainingCrossings -= active.tunnels;
+    active.bridges = Math.min(remainingCrossings, state.totalResources.bridges);
 
     // 2. Cross-check against invariants
     let integrityViolation = false;

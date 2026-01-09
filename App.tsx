@@ -1,12 +1,14 @@
-import React, { useReducer, useEffect, useRef, useState, useMemo } from 'react';
-import { GameState, Station, City, Point, GameMode, TransitLine } from './types';
+
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { GameState, Station, City, Point, GameMode, LogEntry } from './types';
 import { CITIES } from './data/cities';
-import { project } from './services/geometry';
+import { project, getDistance, distToSegment } from './services/geometry';
 import { GameEngine } from './services/gameEngine';
 import { Renderer } from './services/renderer';
 import { Strategist } from './components/Strategist';
 import { Stats } from './components/HUD/Stats';
 import { ResourcePanel } from './components/HUD/ResourcePanel';
+import { SystemValidator } from './services/validation';
 import { THEME, GAME_CONFIG } from './constants';
 import { DataLogger } from './services/dataLogger';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -15,30 +17,11 @@ import { GameCanvas } from './components/GameCanvas';
 import { KeyboardHints } from './components/HUD/KeyboardHints';
 import { MobileWarning } from './components/MobileWarning';
 import { Toast } from './components/UI/Toast';
-import { PersistenceManager } from './services/persistenceManager';
+import { PersistenceManager, SaveData } from './services/persistenceManager';
 
 type AppView = 'MAIN_MENU' | 'CITY_SELECT' | 'MODE_SELECT' | 'GAME';
 
 const DAYS = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'];
-
-type GameAction = 
-  | { type: 'UPDATE_GAME'; payload: GameState }
-  | { type: 'SYNC_TRAINS'; payload: TransitLine[] }
-  | { type: 'SET_VIEW'; payload: AppView }
-  | { type: 'RESET' };
-
-function gameReducer(state: GameState | null, action: GameAction): GameState | null {
-  switch (action.type) {
-    case 'UPDATE_GAME':
-      return { ...action.payload };
-    case 'SYNC_TRAINS':
-      return state ? { ...state, lines: action.payload } : null;
-    case 'RESET':
-      return null;
-    default:
-      return state;
-  }
-}
 
 const App: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -55,10 +38,12 @@ const App: React.FC = () => {
   const [showAudit, setShowAudit] = useState(false);
   const [showStrategist, setShowStrategist] = useState(false);
   
-  const [uiState, dispatch] = useReducer(gameReducer, null);
+  const [uiState, setUiState] = useState<GameState | null>(null);
+  const [, setThrowError] = useState<void>();
   const [isLoading, setIsLoading] = useState(false);
   const [isFadingOut, setIsFadingOut] = useState(false);
   const [saveInfo, setSaveInfo] = useState<{ exists: boolean, time?: string }>({ exists: false });
+  
   const [toast, setToast] = useState<{ msg: string, visible: boolean }>({ msg: '', visible: false });
 
   const [dimensions, setDimensions] = useState({ width: window.innerWidth, height: window.innerHeight });
@@ -71,60 +56,6 @@ const App: React.FC = () => {
   const showToast = (msg: string) => {
     setToast({ msg, visible: true });
   };
-
-  const syncStateImmediate = () => {
-    if (engineRef.current) {
-      dispatch({ type: 'UPDATE_GAME', payload: engineRef.current.state });
-    }
-  };
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (view !== 'GAME') return;
-      
-      const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
-      const cmdKey = isMac ? e.metaKey : e.ctrlKey;
-
-      if (cmdKey && e.key.toLowerCase() === 'z') {
-        e.preventDefault();
-        if (e.shiftKey) {
-          if (engineRef.current?.redo()) {
-            showToast("System Forward-Sync");
-            syncStateImmediate();
-          }
-        } else {
-          if (engineRef.current?.undo()) {
-            showToast("System Reverted");
-            syncStateImmediate();
-          }
-        }
-      }
-
-      if (e.code === 'Space') {
-        e.preventDefault();
-        if (engineRef.current) {
-          engineRef.current.state.timeScale = engineRef.current.state.timeScale === 0 ? 1 : 0;
-          syncStateImmediate();
-        }
-      }
-
-      if (e.key >= '1' && e.key <= '4') {
-        if (engineRef.current) {
-          const speeds: Record<string, number> = { '1': 1, '2': 2, '3': 4, '4': 0 };
-          engineRef.current.state.timeScale = speeds[e.key];
-          syncStateImmediate();
-        }
-      }
-
-      if (e.key === 'Tab') {
-        e.preventDefault();
-        setActiveLineIdx((prev) => (prev + 1) % 10);
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [view, activeLineIdx]);
 
   useEffect(() => {
     const data = PersistenceManager.loadGame();
@@ -158,17 +89,14 @@ const App: React.FC = () => {
     setIsLoading(true);
     setTimeout(() => {
       const city = CITIES.find(c => c.id === saveData.state.cityId) || CITIES[0];
-      const cityWithProjectedWater = {
-        ...city,
-        waterProjected: city.water.map(poly => poly.map(pt => project(pt.lat, pt.lon, city)))
-      };
-      setCurrentCity(cityWithProjectedWater);
+      setCurrentCity(city);
       setSelectedMode(saveData.state.mode);
       setCamera(saveData.camera);
 
+      // Explicitly initialize engine with loaded state including counters
       const engine = new GameEngine(saveData.state);
       engineRef.current = engine;
-      dispatch({ type: 'UPDATE_GAME', payload: engine.state });
+      setUiState({ ...engine.state });
       
       setView('GAME');
       setIsLoading(false);
@@ -180,21 +108,16 @@ const App: React.FC = () => {
 
   const startGame = () => {
     if (!currentCity) return;
+    
     setIsLoading(true);
 
     setTimeout(() => {
-      const cityWithProjectedWater = {
-        ...currentCity,
-        waterProjected: currentCity.water.map(poly => poly.map(pt => project(pt.lat, pt.lon, currentCity)))
-      };
-      setCurrentCity(cityWithProjectedWater);
-
-      const initialStations: Station[] = cityWithProjectedWater.initialStations.map(s => {
-        const pos = project(s.lat, s.lon, cityWithProjectedWater);
+      const initialStations: Station[] = currentCity.initialStations.map(s => {
+        const pos = project(s.lat, s.lon, currentCity);
         return { ...pos, id: s.id, type: s.type, name: s.name, waitingPassengers: [], timer: 0 };
       });
       
-      const scaleFactor = 1 + (cityWithProjectedWater.difficulty * 0.5);
+      const scaleFactor = 1 + (currentCity.difficulty * 0.5);
       const initialInventory = { 
         lines: Math.ceil(GAME_CONFIG.baseResources.lines * scaleFactor), 
         trains: Math.ceil(GAME_CONFIG.baseResources.trains * scaleFactor), 
@@ -204,7 +127,7 @@ const App: React.FC = () => {
       };
 
       const engine = new GameEngine({
-        cityId: cityWithProjectedWater.id, 
+        cityId: currentCity.id, 
         mode: selectedMode, 
         stations: initialStations, 
         lines: [], 
@@ -229,12 +152,22 @@ const App: React.FC = () => {
         stationIdCounter: 1000
       });
       engineRef.current = engine;
-      dispatch({ type: 'UPDATE_GAME', payload: engine.state });
+      setUiState({ ...engine.state });
+      
+      const minX = Math.min(...initialStations.map(s => s.x));
+      const maxX = Math.max(...initialStations.map(s => s.x));
+      const minY = Math.min(...initialStations.map(s => s.y));
+      const maxY = Math.max(...initialStations.map(s => s.y));
+      
+      const initialScale = Math.min(0.6, (window.innerWidth * 0.7) / (maxX - minX || 1));
+      setCamera({ x: window.innerWidth / 2 - ((minX + maxX) / 2) * initialScale, y: window.innerHeight / 2 - ((minY + maxY) / 2) * initialScale, scale: initialScale });
       
       setView('GAME');
+      
       setIsLoading(false);
       setIsFadingOut(true);
       setTimeout(() => setIsFadingOut(false), 500);
+
     }, 2000);
   };
 
@@ -244,16 +177,116 @@ const App: React.FC = () => {
     }
   };
 
+  const syncStateImmediate = () => {
+    if (engineRef.current) setUiState({ ...engineRef.current.state });
+  };
+
+  // Improved autosave loop with status indicator
   useEffect(() => {
     if (view !== 'GAME' || !engineRef.current) return;
+
     const saveInterval = setInterval(() => {
       if (engineRef.current && engineRef.current.state.gameActive && !engineRef.current.state.isPausedForReward) {
         PersistenceManager.saveGame(engineRef.current.state, camera);
         showToast("System Sync Completed");
       }
     }, 45000); 
+
     return () => clearInterval(saveInterval);
   }, [view, camera]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (view !== 'GAME' || !engineRef.current) return;
+
+      if ((e.metaKey || e.ctrlKey) && e.code === 'KeyZ') {
+        e.preventDefault();
+        if (e.shiftKey) {
+          const msg = engineRef.current.redo();
+          if (msg) {
+            showToast(msg);
+            syncStateImmediate();
+          }
+        } else {
+          const msg = engineRef.current.undo();
+          if (msg) {
+            showToast(msg);
+            syncStateImmediate();
+          }
+        }
+        return;
+      }
+
+      switch (e.code) {
+        case 'Space':
+          e.preventDefault();
+          if (engineRef.current) {
+            const currentScale = engineRef.current.state.timeScale;
+            engineRef.current.state.timeScale = currentScale === 0 ? 1 : 0;
+            syncStateImmediate();
+          }
+          break;
+        case 'Digit1':
+          if (engineRef.current) {
+            engineRef.current.state.timeScale = 1;
+            syncStateImmediate();
+          }
+          break;
+        case 'Digit2':
+          if (engineRef.current) {
+            engineRef.current.state.timeScale = 2;
+            syncStateImmediate();
+          }
+          break;
+        case 'Digit3':
+          if (engineRef.current) {
+            engineRef.current.state.timeScale = 3;
+            syncStateImmediate();
+          }
+          break;
+        case 'Digit4':
+          if (engineRef.current) {
+            engineRef.current.state.timeScale = 4;
+            syncStateImmediate();
+          }
+          break;
+        case 'Tab':
+          e.preventDefault();
+          setActiveLineIdx(prev => (prev + 1) % 10);
+          break;
+        case 'KeyD':
+          e.preventDefault();
+          if (rendererRef.current) {
+             rendererRef.current.toggleDebug();
+          }
+          break;
+        case 'KeyS':
+          if ((e.metaKey || e.ctrlKey)) {
+            e.preventDefault();
+            if (engineRef.current) {
+              PersistenceManager.saveGame(engineRef.current.state, camera);
+              showToast("Manual State Saved");
+            }
+          }
+          break;
+        case 'Escape':
+          e.preventDefault();
+          if (showStrategist) setShowStrategist(false);
+          else if (showAudit) setShowAudit(false);
+          else {
+            if (engineRef.current) {
+               const currentScale = engineRef.current.state.timeScale;
+               engineRef.current.state.timeScale = currentScale === 0 ? 1 : 0;
+               syncStateImmediate();
+            }
+          }
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [view, showStrategist, showAudit, camera]);
 
   useEffect(() => {
     const handleResize = () => setDimensions({ width: window.innerWidth, height: window.innerHeight });
@@ -273,75 +306,48 @@ const App: React.FC = () => {
     let lastUiUpdate = 0;
 
     const loop = (t: number) => {
-      if (engineRef.current && rendererRef.current && currentCity) { 
-        engineRef.current.update(t); 
-        
-        rendererRef.current.draw(
-          engineRef.current.state, 
-          camera, 
-          currentCity, 
-          { active: isDragging, start: dragStart, current: dragCurrent, activeLineIdx },
-          { hoveredStation: hoveredStationRef.current, mousePos: mousePosRef.current }
-        );
+      try {
+        if (engineRef.current && rendererRef.current && currentCity) { 
+          engineRef.current.update(t); 
+          
+          rendererRef.current.draw(
+            engineRef.current.state, 
+            camera, 
+            currentCity, 
+            { active: isDragging, start: dragStart, current: dragCurrent, activeLineIdx },
+            { hoveredStation: hoveredStationRef.current, mousePos: mousePosRef.current }
+          );
 
-        if (t - lastUiUpdate > 100) {
-          dispatch({ type: 'UPDATE_GAME', payload: engineRef.current.state });
-          lastUiUpdate = t;
+          if (t - lastUiUpdate > 100) {
+            setUiState({ ...engineRef.current.state });
+            lastUiUpdate = t;
+          }
         }
+        fId = requestAnimationFrame(loop);
+      } catch (e) {
+        setThrowError(() => { throw e; });
       }
-      fId = requestAnimationFrame(loop);
     };
     fId = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(fId);
   }, [camera, isDragging, isPanning, dragStart, dragCurrent, activeLineIdx, currentCity, view]);
 
-  // Fix: Rename handleLineDelete to handleDeleteLine to match prop name used in ResourcePanel
-  const handleDeleteLine = () => {
-    if (engineRef.current) { 
-      engineRef.current.removeLine(activeLineIdx); 
-      syncStateImmediate(); 
-    }
+  const handleLineDelete = () => {
+    if (engineRef.current) { engineRef.current.removeLine(activeLineIdx); syncStateImmediate(); }
   };
 
   const handleAddTrain = () => {
-    if (engineRef.current) { 
-      const result = engineRef.current.addTrainToLine(activeLineIdx); 
-      if (!result.success && result.error) showToast(result.error);
-      syncStateImmediate(); 
-    }
+    if (engineRef.current) { engineRef.current.addTrainToLine(activeLineIdx); syncStateImmediate(); }
   };
 
   const handleRemoveTrain = (trainId: number) => {
-    if (engineRef.current) { 
-      engineRef.current.removeTrainFromLine(activeLineIdx, trainId); 
-      syncStateImmediate(); 
-    }
+    if (engineRef.current) { engineRef.current.removeTrainFromLine(activeLineIdx, trainId); syncStateImmediate(); }
   };
-
-  // Memoized data for ResourcePanel
-  const resourceProps = useMemo(() => {
-    if (!uiState) return null;
-    const activeLine = uiState.lines.find(l => l.id === activeLineIdx);
-    return {
-      linesAvailable: uiState.resources.lines,
-      trainsAvailable: uiState.resources.trains,
-      tunnelsAvailable: uiState.resources.tunnels,
-      bridgesAvailable: uiState.resources.bridges,
-      wagonsAvailable: uiState.resources.wagons,
-      activeLineIdx,
-      lineExists: !!activeLine,
-      trainDetails: activeLine ? activeLine.trains.map(t => ({ id: t.id, wagons: t.wagons })) : [],
-      activeLineColor: THEME.lineColors[activeLineIdx],
-      unconnectedCount: uiState.stations.filter(s => !uiState.lines.some(l => l.stations.includes(s.id))).length,
-      totalWaiting: uiState.stations.reduce((acc, s) => acc + s.waitingPassengers.length, 0),
-      hasLineFlags: Array.from({ length: 10 }).map((_, i) => uiState.lines.some(l => l.id === i))
-    };
-  }, [uiState, activeLineIdx]);
 
   if (view === 'MAIN_MENU') {
     return (
       <div className="fixed inset-0 bg-[#1A1A1A] flex flex-col items-start justify-center p-24 select-none">
-        <LoadingScreen isLoading={isLoading} />
+        <LoadingScreen isFading={!isLoading} />
         <h1 className="text-[120px] font-black tracking-tighter text-white mb-20 leading-none">MINI METRO ▲</h1>
         <div className="flex flex-col gap-4">
           <MenuBtn icon="→" onClick={() => setView('CITY_SELECT')}>New Connection</MenuBtn>
@@ -419,7 +425,7 @@ const App: React.FC = () => {
                 <p className="text-[10px] font-bold uppercase opacity-40 tracking-[0.3em] text-black">{DAYS[Math.floor(uiState.daysElapsed % 7)]}</p>
                 <div className="flex items-center gap-2 mt-4">
                   <button onClick={() => {
-                    if (engineRef.current) PersistenceManager.saveGame(engineRef.current.state, camera);
+                    PersistenceManager.saveGame(engineRef.current!.state, camera);
                     setView('MAIN_MENU');
                   }} className="text-[9px] font-black uppercase tracking-widest opacity-30 hover:opacity-100 text-black text-left">← Main Hub</button>
                   <span className="w-1 h-1 bg-black/10 rounded-full" />
@@ -429,23 +435,20 @@ const App: React.FC = () => {
   
               <Stats score={uiState.score} timeScale={uiState.timeScale} onSpeedChange={(s) => { if(engineRef.current) engineRef.current.state.timeScale = s; syncStateImmediate(); }} />
   
-              {resourceProps && (
-                <ResourcePanel 
-                  {...resourceProps}
-                  onLineIdxChange={setActiveLineIdx} 
-                  onAddTrain={handleAddTrain} 
-                  onRemoveTrain={handleRemoveTrain}
-                  onDeleteLine={handleDeleteLine} 
-                  onAudit={() => setShowAudit(!showAudit)}
-                  onAddWagon={(trainId) => { 
-                    const res = engineRef.current?.addWagonToTrain(activeLineIdx, trainId); 
-                    if (res && !res.success && res.error) showToast(res.error);
-                    syncStateImmediate(); 
-                  }}
-                  onRemoveWagon={(trainId) => { engineRef.current?.removeWagonFromTrain(activeLineIdx, trainId); syncStateImmediate(); }}
-                  onDownload={handleDownloadAnalysis}
-                />
-              )}
+              <ResourcePanel 
+                resources={uiState.resources} 
+                activeLineIdx={activeLineIdx} 
+                onLineIdxChange={setActiveLineIdx} 
+                lines={uiState.lines} 
+                stations={uiState.stations}
+                onAddTrain={handleAddTrain} 
+                onRemoveTrain={handleRemoveTrain}
+                onDeleteLine={handleLineDelete} 
+                onAudit={() => setShowAudit(!showAudit)}
+                onAddWagon={(trainId) => { engineRef.current?.addWagonToTrain(activeLineIdx, trainId); syncStateImmediate(); }}
+                onRemoveWagon={(trainId) => { engineRef.current?.removeWagonFromTrain(activeLineIdx, trainId); syncStateImmediate(); }}
+                onDownload={handleDownloadAnalysis}
+              />
               <KeyboardHints />
             </>
           )}
@@ -461,7 +464,6 @@ const App: React.FC = () => {
             activeLineIdx={activeLineIdx}
             setActiveLineIdx={setActiveLineIdx}
             syncStateImmediate={syncStateImmediate}
-            showToast={showToast}
             isDragging={isDragging}
             setIsDragging={setIsDragging}
             isPanning={isPanning}
@@ -484,13 +486,13 @@ const App: React.FC = () => {
             <div className="fixed bottom-32 left-8 z-[100] bg-white p-6 border-2 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] min-w-[300px]">
                <h4 className="text-[10px] font-black uppercase mb-4 tracking-widest border-b border-black pb-2 text-black">System Audit & Integrity</h4>
                <div className="mb-4 p-2 bg-black/5 text-[9px] font-mono leading-tight border border-black/10 text-black font-bold">
-                 STATUS: OPERATIONAL <br/>
+                 STATUS: {SystemValidator.validateSystemState(uiState, currentCity!) ? 'OPTIMAL' : 'ADJUSTING'} <br/>
                  VERIFICATION CYCLE: 5.0s
                </div>
                {Object.entries(uiState.totalResources).map(([k, v]) => (
                  <div key={k} className="flex justify-between py-1.5 text-[10px] font-black uppercase border-b border-black last:border-0 text-black">
                    <span className="opacity-70">{k}</span>
-                   <span className="tabular-nums font-black">{uiState.resources[k as keyof typeof uiState.resources]} / {v as number}</span>
+                   <span className="tabular-nums font-black">{uiState.resources[k as keyof typeof uiState.resources]} / {v}</span>
                  </div>
                ))}
             </div>
@@ -512,42 +514,39 @@ const App: React.FC = () => {
             </div>
           )}
   
-          {uiState && !uiState.gameActive && !uiState.crashError && (
-            <div className="fixed inset-0 z-[500] flex items-center justify-center bg-black/60 backdrop-blur-md text-black">
+          {uiState && !uiState.gameActive && (
+            <div className="fixed inset-0 z-[500] flex items-center justify-center bg-black/60 backdrop-blur-md">
               <div className="bg-white p-12 max-w-xl w-full border-4 border-black shadow-[20px_20px_0px_0px_rgba(0,0,0,1)] animate-in zoom-in-105">
                 <h2 className="text-5xl font-black uppercase tracking-tighter mb-4 text-black border-b-8 border-black pb-4">System Halted</h2>
                 <p className="text-xl font-black uppercase mb-12 text-black/60 tracking-tight">One of your stations reached critical capacity.</p>
+                
                 <div className="grid grid-cols-2 gap-1 mb-12 bg-black border-2 border-black">
                   <StatCard label="Final Throughput" val={uiState.score} />
                   <StatCard label="Weeks Operational" val={uiState.level} />
                   <StatCard label="Network Size" val={uiState.stations.length} />
                   <StatCard label="Transit Lines" val={uiState.lines.length} />
                 </div>
+  
                 <div className="flex flex-col gap-4">
-                  <button onClick={restartGame} className="w-full py-6 bg-[#2ECC71] text-white border-4 border-black text-2xl font-black uppercase tracking-tighter shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] hover:shadow-none hover:translate-x-1 hover:translate-y-1 transition-all">Re-Initialize Network</button>
-                  <button onClick={() => { PersistenceManager.clearSave(); setView('CITY_SELECT'); }} className="w-full py-4 bg-white text-black border-4 border-black text-lg font-black uppercase tracking-tighter hover:bg-black hover:text-white transition-colors">Change Region</button>
-                  <button onClick={handleDownloadAnalysis} className="w-full py-2 bg-black text-white text-[10px] font-black uppercase">Download Analysis Data</button>
+                  <button 
+                    onClick={restartGame}
+                    className="w-full py-6 bg-[#2ECC71] text-white border-4 border-black text-2xl font-black uppercase tracking-tighter shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] hover:shadow-none hover:translate-x-1 hover:translate-y-1 transition-all"
+                  >
+                    Re-Initialize Network
+                  </button>
+                  <button 
+                    onClick={() => { PersistenceManager.clearSave(); setView('CITY_SELECT'); }}
+                    className="w-full py-4 bg-white text-black border-4 border-black text-lg font-black uppercase tracking-tighter hover:bg-black hover:text-white transition-colors"
+                  >
+                    Change Region
+                  </button>
+                  <button 
+                    onClick={handleDownloadAnalysis}
+                    className="w-full py-2 bg-black text-white text-[10px] font-black uppercase"
+                  >
+                    Download Analysis Data
+                  </button>
                 </div>
-              </div>
-            </div>
-          )}
-
-          {uiState?.crashError && (
-            <div className="fixed inset-0 z-[600] flex items-center justify-center bg-[#EF3340]/20 backdrop-blur-xl text-black">
-              <div className="bg-white p-12 max-w-2xl w-full border-4 border-black shadow-[24px_24px_0px_0px_rgba(0,0,0,1)] animate-in slide-in-from-bottom-12">
-                <div className="border-b-8 border-black pb-4 mb-8">
-                  <h2 className="text-6xl font-black uppercase tracking-tighter text-[#EF3340]">System Crash</h2>
-                  <span className="text-[10px] font-black uppercase tracking-[0.4em] opacity-40">Critical Engine Exception</span>
-                </div>
-                <div className="bg-black/5 p-6 border-l-8 border-black mb-12 font-mono text-xs overflow-auto max-h-[200px] text-black">
-                  <pre className="whitespace-pre-wrap">{uiState.crashError}</pre>
-                </div>
-                <button 
-                  onClick={() => { PersistenceManager.clearSave(); window.location.reload(); }}
-                  className="w-full py-6 bg-black text-white text-2xl font-black uppercase tracking-widest hover:bg-[#2ECC71] hover:text-black transition-all shadow-[8px_8px_0px_0px_rgba(0,0,0,0.3)] hover:shadow-none hover:translate-x-1 hover:translate-y-1"
-                >
-                  Hard Reset System
-                </button>
               </div>
             </div>
           )}

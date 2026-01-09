@@ -14,7 +14,6 @@ interface GameCanvasProps {
   activeLineIdx: number;
   setActiveLineIdx: (idx: number) => void;
   syncStateImmediate: () => void;
-  showToast: (msg: string) => void;
   
   isDragging: boolean;
   setIsDragging: (val: boolean) => void;
@@ -40,7 +39,6 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   activeLineIdx,
   setActiveLineIdx,
   syncStateImmediate,
-  showToast,
   isDragging,
   setIsDragging,
   isPanning,
@@ -73,6 +71,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     e.preventDefault();
     if (!engineRef.current || !canvasRef.current) return;
     
+    // Use engine state directly for interactions
     const state = engineRef.current.state;
     const rect = canvasRef.current.getBoundingClientRect();
     const worldMouse = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
@@ -131,6 +130,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     else if (isDragging) { 
       setDragCurrent(screenToWorld(mx, my)); 
     } else {
+       // Hover check
        const world = screenToWorld(mx, my);
        const hit = engineRef.current?.state.stations.find(s => getDistance(s, world) < 80 / camera.scale);
        if (hoveredStationRef) hoveredStationRef.current = hit || null;
@@ -144,13 +144,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       const hit = engineRef.current.state.stations.find(s => getDistance(s, worldMouse) < 80 / camera.scale);
       
       if (hit && hit.id !== dragStart.id && currentCity) {
-        const result = engineRef.current.tryConnectStations(activeLineIdx, dragStart, hit, currentCity);
-        if (result.success) {
-          setActiveLineIdx(result.lineIdx!);
-          syncStateImmediate();
-        } else if (result.error) {
-          showToast(result.error);
-        }
+        const newActiveId = engineRef.current.tryConnectStations(activeLineIdx, dragStart, hit, currentCity);
+        setActiveLineIdx(newActiveId);
+        syncStateImmediate();
       }
     }
     setIsPanning(false); 

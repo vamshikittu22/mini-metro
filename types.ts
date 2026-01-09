@@ -1,3 +1,4 @@
+
 export type StationType = 'circle' | 'square' | 'triangle' | 'pentagon' | 'star';
 export type GameMode = 'NORMAL' | 'EXTREME' | 'ENDLESS' | 'CREATIVE';
 
@@ -31,17 +32,10 @@ export interface Passenger {
   boardingHistory?: Array<{lineId: number, stationId: number, timestamp: number}>;
 }
 
-export interface LineSegment {
-  from: number;
-  to: number;
-  crossing: 'tunnel' | 'bridge' | null;
-}
-
 export interface TransitLine {
   id: number;
   color: string;
   stations: number[];
-  segments: LineSegment[];
   trains: Train[];
 }
 
@@ -81,7 +75,6 @@ export interface City {
     maxLon: number;
   };
   water: { lat: number; lon: number }[][];
-  waterProjected?: Point[][];
   initialStations: { id: number; type: StationType; lat: number; lon: number; name: string }[];
   difficulty: number;
 }
@@ -119,14 +112,8 @@ export interface GameState {
   passengerTimer: number;
   stationTimer: number;
   analytics: LogEntry[];
+  // Added for Save/Resume continuity
   passengerIdCounter: number;
   stationIdCounter: number;
   lastSaved?: number;
-  crashError?: string;
-}
-
-export interface SaveData {
-  state: GameState;
-  camera: { x: number; y: number; scale: number };
-  timestamp: number;
 }

@@ -1,30 +1,25 @@
 import React, { useState, useEffect } from 'react';
 
-const DISMISS_KEY = 'mini-metro-mobile-dismissed-until';
-const DISMISS_DURATION = 7 * 24 * 60 * 60 * 1000; // 7 days
-
 export const MobileWarning: React.FC = () => {
   const [isVisible, setIsVisible] = useState(false);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-
-    const hasTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-    const isSmallScreen = window.innerWidth < 768;
+    // Basic mobile detection: check width or touch capability
+    const isMobile = typeof window !== 'undefined' && (
+      window.innerWidth < 768 || 
+      'ontouchstart' in window || 
+      navigator.maxTouchPoints > 0
+    );
     
-    // Only warn if it's both a small screen and has touch support (skipping tablets/desktops)
-    const isTargetDevice = isSmallScreen && hasTouch;
-    
-    const dismissedUntil = localStorage.getItem(DISMISS_KEY);
-    const isCurrentlyDismissed = dismissedUntil && Date.now() < parseInt(dismissedUntil, 10);
+    const hasDismissed = localStorage.getItem('mini-metro-mobile-warning-dismissed');
 
-    if (isTargetDevice && !isCurrentlyDismissed) {
+    if (isMobile && !hasDismissed) {
       setIsVisible(true);
     }
   }, []);
 
   const handleDismiss = () => {
-    localStorage.setItem(DISMISS_KEY, (Date.now() + DISMISS_DURATION).toString());
+    localStorage.setItem('mini-metro-mobile-warning-dismissed', 'true');
     setIsVisible(false);
   };
 
@@ -45,7 +40,7 @@ export const MobileWarning: React.FC = () => {
           </p>
           <div className="bg-black/5 p-4 border-l-4 border-black">
             <p className="text-[10px] font-black uppercase text-black/60">
-              Notice: Mobile support coming soon. Touch controls may be imprecise. This reminder will reappear in 7 days.
+              Notice: Mobile support coming soon. Touch controls may be imprecise.
             </p>
           </div>
         </div>

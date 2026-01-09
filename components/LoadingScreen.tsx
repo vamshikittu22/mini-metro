@@ -1,17 +1,14 @@
 import React from 'react';
 
 interface LoadingScreenProps {
-  isLoading: boolean;
+  isFading: boolean;
 }
 
-/**
- * Loading screen component with pure CSS fade-out animations.
- */
-export const LoadingScreen: React.FC<LoadingScreenProps> = ({ isLoading }) => {
+export const LoadingScreen: React.FC<LoadingScreenProps> = ({ isFading }) => {
   return (
     <div 
-      className={`fixed inset-0 z-[9999] bg-[#F8F4EE] flex flex-col items-center justify-center pointer-events-none ${
-        !isLoading ? 'animate-fadeOut' : 'opacity-100'
+      className={`fixed inset-0 z-[9999] bg-[#F8F4EE] flex flex-col items-center justify-center transition-opacity duration-500 pointer-events-none ${
+        isFading ? 'opacity-0' : 'opacity-100'
       }`}
     >
       <div className="relative mb-8">
@@ -31,16 +28,6 @@ export const LoadingScreen: React.FC<LoadingScreenProps> = ({ isLoading }) => {
           <div className="w-1 h-1 bg-black rounded-full animate-bounce" />
         </div>
       </div>
-
-      <style>{`
-        @keyframes fadeOut {
-          from { opacity: 1; visibility: visible; }
-          to { opacity: 0; visibility: hidden; }
-        }
-        .animate-fadeOut {
-          animation: fadeOut 600ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
-        }
-      `}</style>
     </div>
   );
 };

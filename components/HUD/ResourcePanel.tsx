@@ -1,20 +1,14 @@
+
 import React from 'react';
 import { THEME } from '../../constants';
+import { TransitLine, Station } from '../../types';
 
 interface ResourcePanelProps {
-  linesAvailable: number;
-  trainsAvailable: number;
-  tunnelsAvailable: number;
-  bridgesAvailable: number;
-  wagonsAvailable: number;
+  resources: { lines: number; trains: number; tunnels: number; bridges: number; wagons: number };
   activeLineIdx: number;
-  lineExists: boolean;
-  trainDetails: { id: number; wagons: number }[];
-  activeLineColor: string;
-  unconnectedCount: number;
-  totalWaiting: number;
-  hasLineFlags: boolean[];
   onLineIdxChange: (idx: number) => void;
+  lines: TransitLine[];
+  stations: Station[];
   onAddTrain: () => void;
   onRemoveTrain: (trainId: number) => void;
   onDeleteLine: () => void;
@@ -32,20 +26,12 @@ function getContrastColor(hexColor: string) {
   return yiq >= 128 ? '#000000' : '#FFFFFF';
 }
 
-const ResourcePanelComponent: React.FC<ResourcePanelProps> = ({ 
-  linesAvailable,
-  trainsAvailable,
-  tunnelsAvailable,
-  bridgesAvailable,
-  wagonsAvailable,
+export const ResourcePanel: React.FC<ResourcePanelProps> = ({ 
+  resources, 
   activeLineIdx, 
-  lineExists,
-  trainDetails,
-  activeLineColor,
-  unconnectedCount, 
-  totalWaiting,
-  hasLineFlags,
   onLineIdxChange, 
+  lines,
+  stations,
   onAddTrain,
   onRemoveTrain,
   onDeleteLine,
@@ -54,7 +40,14 @@ const ResourcePanelComponent: React.FC<ResourcePanelProps> = ({
   onRemoveWagon,
   onDownload
 }) => {
-  const trainCount = trainDetails.length;
+  const activeLine = lines.find(l => l.id === activeLineIdx);
+  const trainCount = activeLine ? activeLine.trains.length : 0;
+
+  const unconnectedCount = stations.filter(s => 
+    !lines.some(l => l.stations.includes(s.id))
+  ).length;
+
+  const totalWaiting = stations.reduce((acc, s) => acc + s.waitingPassengers.length, 0);
 
   return (
     <>
@@ -62,7 +55,8 @@ const ResourcePanelComponent: React.FC<ResourcePanelProps> = ({
       <div className="fixed top-8 left-1/2 -translate-x-1/2 z-50 flex gap-1 pointer-events-auto bg-white border-2 border-black p-1 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
         {Array.from({ length: 10 }).map((_, idx) => {
           const isActive = activeLineIdx === idx;
-          const hasLine = hasLineFlags[idx];
+          const lineRef = lines.find(l => l.id === idx);
+          const hasLine = !!lineRef;
           const lineColor = THEME.lineColors[idx];
           const textColor = getContrastColor(lineColor);
           
@@ -86,11 +80,11 @@ const ResourcePanelComponent: React.FC<ResourcePanelProps> = ({
 
       {/* Bottom Inventory Bar */}
       <div className="fixed bottom-8 left-8 z-50 flex items-center gap-2 pointer-events-auto">
-        <InvItem code="L" val={linesAvailable} label="Lines" onClick={onAudit} />
-        <InvItem code="T" val={trainsAvailable} label="Locos" onClick={onAudit} />
-        <InvItem code="U" val={tunnelsAvailable} label="Tunnels" onClick={onAudit} />
-        <InvItem code="B" val={bridgesAvailable} label="Bridges" onClick={onAudit} />
-        <InvItem code="W" val={wagonsAvailable} label="Wagons" onClick={onAudit} />
+        <InvItem code="L" val={resources.lines} label="Lines" onClick={onAudit} />
+        <InvItem code="T" val={resources.trains} label="Locos" onClick={onAudit} />
+        <InvItem code="U" val={resources.tunnels} label="Tunnels" onClick={onAudit} />
+        <InvItem code="B" val={resources.bridges} label="Bridges" onClick={onAudit} />
+        <InvItem code="W" val={resources.wagons} label="Wagons" onClick={onAudit} />
         
         <div className="ml-4 bg-black p-3 border-2 border-white flex gap-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
           <div className="flex flex-col">
@@ -120,22 +114,22 @@ const ResourcePanelComponent: React.FC<ResourcePanelProps> = ({
          <div className="flex justify-between items-center mb-6 border-b-2 border-black pb-4">
             <div className="flex flex-col">
                <div className="flex items-center gap-2">
-                 <div className="w-4 h-4 border border-black" style={{ backgroundColor: activeLineColor }} />
+                 <div className="w-4 h-4 border border-black" style={{ backgroundColor: THEME.lineColors[activeLineIdx] }} />
                  <span className="text-[13px] font-black uppercase tracking-widest text-black">SYSTEM {activeLineIdx + 1}</span>
                </div>
                <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-black/60">{trainCount} ACTIVE TRAINS</span>
             </div>
             <button 
               onClick={onAddTrain} 
-              disabled={trainsAvailable <= 0}
+              disabled={resources.trains <= 0}
               className="bg-black text-white px-3 py-2 text-[9px] font-black uppercase hover:bg-emerald-500 transition-all disabled:opacity-20"
             >
               + LOCO
             </button>
          </div>
 
-         <div className="flex flex-col gap-3 mb-6 max-h-[260px] overflow-y-auto pr-2 custom-scrollbar text-black">
-           {trainDetails.map((train, i) => (
+         <div className="flex flex-col gap-3 mb-6 max-h-[260px] overflow-y-auto pr-2 custom-scrollbar">
+           {activeLine?.trains.map((train, i) => (
              <div key={train.id} className="bg-black/5 p-3 border border-black flex flex-col gap-2">
                <div className="flex justify-between items-center">
                  <span className="text-[9px] font-black uppercase tracking-tight text-black">Train {i+1} • {train.wagons} Wagons</span>
@@ -144,7 +138,7 @@ const ResourcePanelComponent: React.FC<ResourcePanelProps> = ({
                <div className="flex gap-2">
                  <button 
                    onClick={() => onAddWagon(train.id)}
-                   disabled={wagonsAvailable <= 0}
+                   disabled={resources.wagons <= 0}
                    className="flex-1 bg-white border border-black hover:bg-black hover:text-white py-1.5 text-[8px] font-black uppercase transition-all disabled:opacity-30"
                  >
                    + Wagon
@@ -167,9 +161,9 @@ const ResourcePanelComponent: React.FC<ResourcePanelProps> = ({
          </div>
 
          <div className="flex flex-col gap-2">
-            {lineExists && (
+            {activeLine && (
               <button 
-                onClick={onDeleteLine}
+                onClick={handleDeleteClick}
                 className="w-full py-2.5 bg-white border-2 border-black hover:bg-red-600 hover:text-white text-black text-[10px] font-black uppercase transition-all"
               >
                 Delete Line {activeLineIdx + 1}
@@ -185,6 +179,10 @@ const ResourcePanelComponent: React.FC<ResourcePanelProps> = ({
       `}</style>
     </>
   );
+
+  function handleDeleteClick() {
+    onDeleteLine();
+  }
 };
 
 const InvItem = ({ code, val, label, onClick }: any) => (
@@ -196,5 +194,3 @@ const InvItem = ({ code, val, label, onClick }: any) => (
     </div>
   </div>
 );
-
-export const ResourcePanel = React.memo(ResourcePanelComponent);
