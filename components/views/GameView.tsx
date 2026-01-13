@@ -51,6 +51,22 @@ const DAYS = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'
 export const GameView: React.FC<GameViewProps> = (props) => {
   const { uiState, currentCity } = props;
 
+  // Tiny snapshot for Strategist
+  const strategistSnapshot = {
+    stations: uiState.stations.map(s => ({
+      id: s.id,
+      name: s.name,
+      type: s.type,
+      x: s.x,
+      y: s.y,
+      waitingCount: s.waitingPassengers.length
+    })),
+    lines: uiState.lines.map(l => ({
+      id: l.id,
+      stations: l.stations
+    }))
+  };
+
   return (
     <>
       <div className="absolute top-8 left-8 z-50 pointer-events-auto flex flex-col gap-1">
@@ -114,11 +130,19 @@ export const GameView: React.FC<GameViewProps> = (props) => {
         mousePosRef={props.mousePosRef}
       />
 
+      {/* Suggest Line Button */}
       <div className="fixed bottom-32 left-8 z-50 flex flex-col gap-2">
-        <button onClick={() => props.setShowStrategist(!props.showStrategist)} className="bg-black text-white w-12 h-12 flex items-center justify-center shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:translate-x-1 hover:translate-y-1 hover:shadow-none transition-all" title="AI Strategist"><span className="text-xl">🧠</span></button>
+        <button 
+          onClick={() => props.setShowStrategist(!props.showStrategist)} 
+          className="bg-black text-white group flex items-center gap-3 px-4 py-3 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:translate-x-1 hover:translate-y-1 hover:shadow-none transition-all" 
+          title="Suggest Line"
+        >
+          <span className="text-xl">🧠</span>
+          <span className="hidden group-hover:inline text-[9px] font-black uppercase tracking-widest">Suggest Line</span>
+        </button>
       </div>
 
-      {props.showStrategist && <Strategist gameState={uiState} onClose={() => props.setShowStrategist(false)} />}
+      {props.showStrategist && <Strategist snapshot={strategistSnapshot} onClose={() => props.setShowStrategist(false)} />}
       
       {props.showAudit && (
         <div className="fixed bottom-32 left-8 z-[100] bg-white p-6 border-2 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] min-w-[300px]">

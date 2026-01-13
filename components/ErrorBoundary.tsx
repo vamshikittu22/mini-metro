@@ -1,4 +1,5 @@
-import React, { Component, ErrorInfo, ReactNode } from 'react';
+
+import React, { ErrorInfo, ReactNode } from 'react';
 
 interface Props {
   children?: ReactNode;
@@ -13,17 +14,15 @@ interface State {
  * ErrorBoundary component to catch runtime errors and display a fallback UI.
  * Inherits from React.Component with explicit generic types for props and state.
  */
-// Fix: Use Component directly to ensure inherited members like 'props' are correctly recognized by the compiler.
-export class ErrorBoundary extends Component<Props, State> {
-  // Explicitly defining the state as a class property to ensure it's recognized by the TypeScript compiler.
-  state: State = {
-    hasError: false,
-    error: null
-  };
-
-  // Explicitly defining the constructor and calling super(props) to initialize the component correctly.
+// Fix: Use React.Component to ensure inherited members like 'props' and 'state' are correctly recognized by the compiler.
+export class ErrorBoundary extends React.Component<Props, State> {
+  // Explicitly defining the constructor and initializing state to ensure proper type resolution.
   constructor(props: Props) {
     super(props);
+    this.state = {
+      hasError: false,
+      error: null
+    };
   }
 
   static getDerivedStateFromError(error: Error): State {
@@ -37,9 +36,9 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   render() {
-    // Destructure state and props from this to ensure they are accessed correctly and recognized as members of the class.
+    // Destructure state and props from this.
     const { hasError, error } = this.state;
-    // Fix: Explicitly accessing props which is now properly inherited from Component<Props, State>
+    // Fix: Accessing children from this.props which is correctly inherited from React.Component<Props, State>.
     const { children } = this.props;
 
     if (hasError) {
@@ -73,7 +72,6 @@ export class ErrorBoundary extends Component<Props, State> {
       );
     }
 
-    // Correctly access the children prop from the React Component instance
     return children;
   }
 }
