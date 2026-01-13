@@ -1,6 +1,8 @@
+
 import { Passenger, Train, Station, GameState, TransitLine } from '../../types';
 import { RouteEvaluator } from './RouteEvaluator';
 import { PATHFINDING_CONFIG } from '../../constants/pathfinding.config';
+import { MODE_CONFIG } from '../../constants';
 
 export class HybridGreedyRouter {
   /**
@@ -36,11 +38,13 @@ export class HybridGreedyRouter {
     const trainLine = state.lines.find(l => l.id === train.lineId);
     if (!trainLine) return { shouldBoard: false, reason: 'no_line' };
 
+    const maxDepth = MODE_CONFIG[state.mode].maxTransferDepth;
+
     // 1. Verify if this train's line can reach the destination within max transfer depth
     const canReach = RouteEvaluator.canLineReachDestination(
       trainLine,
       passenger.destinationShape,
-      PATHFINDING_CONFIG.MAX_TRANSFER_DEPTH,
+      maxDepth,
       state
     );
 
@@ -100,13 +104,15 @@ export class HybridGreedyRouter {
     const trainLine = state.lines.find(l => l.id === train.lineId);
     if (!trainLine) return { action: 'STAY', reason: 'no_line' };
 
+    const maxDepth = MODE_CONFIG[state.mode].maxTransferDepth;
+
     // 2. Transfer Check: Dynamically find all other lines passing through this station
     const otherConnectedLines = state.lines.filter(l => l.stations.includes(currentStation.id) && l.id !== train.lineId);
 
     // 3. Evaluation: Is any other line passing through here strictly better than the current one?
     const betterLines = otherConnectedLines.filter(l => {
       const isBetter = RouteEvaluator.getBetterLine(l, trainLine, passenger.destinationShape, state)?.id === l.id;
-      const canReach = RouteEvaluator.canLineReachDestination(l, passenger.destinationShape, PATHFINDING_CONFIG.MAX_TRANSFER_DEPTH, state);
+      const canReach = RouteEvaluator.canLineReachDestination(l, passenger.destinationShape, maxDepth, state);
       return isBetter && canReach;
     });
 

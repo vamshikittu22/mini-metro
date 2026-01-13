@@ -3,7 +3,7 @@ import {
   GameState, Station, TransitLine, Train, Passenger, StationType, City, RewardChoice, ScoreAnimation, LogEntry
 } from '../types';
 import { CITIES } from '../data/cities';
-import { GAME_CONFIG, THEME, CITY_STATION_POOLS } from '../constants';
+import { GAME_CONFIG, THEME, CITY_STATION_POOLS, MODE_CONFIG } from '../constants';
 import { getDistance, isSegmentCrossingWater, project, WORLD_SIZE, isPointInPolygon } from './geometry';
 import { InventoryManager } from './inventoryManager';
 import { SystemValidator } from './validation';
@@ -189,15 +189,14 @@ export class GameEngine {
     const baseRate = GAME_CONFIG.spawnRate;
     const levelFactor = 1 + (this.state.level - 1) * 0.2;
     const timeFactor = 1 + (this.state.daysElapsed / 28);
-    let modeFactor = 1.0;
-    if (this.state.mode === 'EXTREME') modeFactor = 1.5;
-    if (this.state.mode === 'CREATIVE') modeFactor = 0.5;
+    const modeConfig = MODE_CONFIG[this.state.mode];
+    const modeFactor = modeConfig.spawnMultiplier;
     return Math.max(800, (baseRate / (levelFactor * timeFactor)) / modeFactor);
   }
 
   tryConnectStations(lineIdx: number, startStation: Station, endStation: Station, city: City) {
     if (startStation.id === endStation.id) return lineIdx;
-    const isCreative = this.state.mode === 'CREATIVE';
+    const isInfinite = MODE_CONFIG[this.state.mode].infiniteResources;
 
     let line = this.state.lines.find(l => l.stations[0] === startStation.id || l.stations[l.stations.length - 1] === startStation.id);
     let targetLineId = line ? line.id : -1;
@@ -207,7 +206,7 @@ export class GameEngine {
     }
 
     const crossesWater = isSegmentCrossingWater(startStation, endStation, city);
-    if (crossesWater && !isCreative) {
+    if (crossesWater && !isInfinite) {
       const totalAvailable = this.state.resources.tunnels + this.state.resources.bridges;
       if (totalAvailable <= 0) return lineIdx;
     }
@@ -215,7 +214,7 @@ export class GameEngine {
     this.historyManager.push(this.state.lines);
 
     if (!line) {
-      if (this.state.resources.lines > 0 || isCreative) {
+      if (this.state.resources.lines > 0 || isInfinite) {
         if (targetLineId !== -1) {
           lineIdx = targetLineId;
           line = { id: lineIdx, color: THEME.lineColors[lineIdx], stations: [startStation.id, endStation.id], trains: [] };
@@ -282,7 +281,7 @@ export class GameEngine {
         if (t.nextStationIndex >= line.stations.length) t.nextStationIndex = line.stations.length - 1;
       });
     } else {
-      if (this.state.resources.lines > 0 || this.state.mode === 'CREATIVE') {
+      if (this.state.resources.lines > 0 || MODE_CONFIG[this.state.mode].infiniteResources) {
         line.stations = head;
         const usedIds = new Set(this.state.lines.map(l => l.id));
         let nextId = -1;
@@ -403,7 +402,7 @@ export class GameEngine {
   }
 
   updateStations(dt: number) {
-    if (this.state.mode === 'CREATIVE') return;
+    if (!MODE_CONFIG[this.state.mode].overflowEnabled) return;
     this.state.stations.forEach(station => {
       if (station.waitingPassengers.length >= GAME_CONFIG.maxPassengers - 1) station.timer = Math.min(1.0, station.timer + (dt / 40000));
       else station.timer = Math.max(0, station.timer - (dt / 20000));
@@ -411,7 +410,7 @@ export class GameEngine {
   }
 
   checkFailure() {
-    if (this.state.mode === 'ENDLESS' || this.state.mode === 'CREATIVE') return;
+    if (!MODE_CONFIG[this.state.mode].overflowEnabled) return;
     if (this.state.stations.some(s => s.timer >= 1.0)) this.state.gameActive = false;
   }
 
@@ -473,7 +472,7 @@ export class GameEngine {
     const diffMult = 1 / (city.difficulty * GAME_CONFIG.spawnRatios.difficultyMultiplier);
     const maxStationsGlobal = Math.max(5, activeTrains * GAME_CONFIG.spawnRatios.stationsPerTrain * diffMult);
     
-    if (this.state.stations.length >= maxStationsGlobal && this.state.mode !== 'CREATIVE') return;
+    if (this.state.stations.length >= maxStationsGlobal && !MODE_CONFIG[this.state.mode].infiniteResources) return;
 
     const waterPolygons = city.water.map(poly => poly.map(pt => project(pt.lat, pt.lon, city)));
     const currentWaterStations = this.state.stations.filter(s => 
@@ -481,7 +480,7 @@ export class GameEngine {
     ).length;
     
     const maxIsolatedStations = totalWaterResources * GAME_CONFIG.spawnRatios.stationsPerWaterResource * diffMult;
-    const allowWaterSpawn = this.state.mode === 'CREATIVE' || (availableWaterResources > 0 && currentWaterStations < maxIsolatedStations);
+    const allowWaterSpawn = MODE_CONFIG[this.state.mode].infiniteResources || (availableWaterResources > 0 && currentWaterStations < maxIsolatedStations);
 
     for (let i = 0; i < 60; i++) {
       const r1 = Math.random();
@@ -517,7 +516,7 @@ export class GameEngine {
 
   addTrainToLine(lineId: number) {
     const line = this.state.lines.find(l => l.id === lineId);
-    if (line && (this.state.resources.trains > 0 || this.state.mode === 'CREATIVE')) {
+    if (line && (this.state.resources.trains > 0 || MODE_CONFIG[this.state.mode].infiniteResources)) {
       line.trains.push({ 
         id: Math.random(), 
         lineId, 
@@ -548,7 +547,7 @@ export class GameEngine {
     const line = this.state.lines.find(l => l.id === lineId);
     if (!line) return;
     const train = line.trains.find(t => t.id === trainId);
-    if (train && (this.state.resources.wagons > 0 || this.state.mode === 'CREATIVE')) {
+    if (train && (this.state.resources.wagons > 0 || MODE_CONFIG[this.state.mode].infiniteResources)) {
       train.wagons++;
       const city = CITIES.find(c => c.id === this.state.cityId) || CITIES[0];
       InventoryManager.validateInventory(this.state, city);

@@ -1,6 +1,7 @@
 
 import { GameState, City, TransitLine } from '../types';
 import { isSegmentCrossingWater } from './geometry';
+import { MODE_CONFIG } from '../constants';
 
 export class InventoryManager {
   /**
@@ -8,7 +9,7 @@ export class InventoryManager {
    * If a discrepancy is detected, Available is force-corrected to restore balance.
    */
   static validateInventory(state: GameState, city: City) {
-    if (state.mode === 'CREATIVE') return;
+    if (MODE_CONFIG[state.mode].infiniteResources) return;
 
     // 1. Calculate what is actually on the map
     const active = {

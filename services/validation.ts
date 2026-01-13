@@ -1,7 +1,9 @@
+
 import { GameState, City, StationType } from '../types';
 import { InventoryManager } from './inventoryManager';
 import { isSegmentCrossingWater } from './geometry';
 import { RouteEvaluator } from './pathfinding/RouteEvaluator';
+import { MODE_CONFIG } from '../constants';
 
 export class SystemValidator {
   /**
@@ -9,7 +11,7 @@ export class SystemValidator {
    * Force-corrects the available pool if a leak is detected.
    */
   static validateSystemState(state: GameState, city: City) {
-    if (state.mode === 'CREATIVE') return true;
+    if (MODE_CONFIG[state.mode].infiniteResources) return true;
 
     // 1. Calculate Active Assets
     const active = {

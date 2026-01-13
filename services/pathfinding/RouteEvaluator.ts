@@ -1,5 +1,7 @@
+
 import { Station, TransitLine, StationType, GameState } from '../../types';
 import { PATHFINDING_CONFIG } from '../../constants/pathfinding.config';
+import { MODE_CONFIG } from '../../constants';
 
 export class RouteEvaluator {
   private static reachabilityCache = new Map<string, boolean>();
@@ -23,7 +25,7 @@ export class RouteEvaluator {
     maxDepth: number,
     state: GameState
   ): boolean {
-    const cacheKey = `${line.id}_${destinationShape}_${maxDepth}`;
+    const cacheKey = `${line.id}_${destinationShape}_${maxDepth}_${state.mode}`;
     if (this.reachabilityCache.has(cacheKey)) {
       return this.reachabilityCache.get(cacheKey)!;
     }
@@ -126,9 +128,10 @@ export class RouteEvaluator {
   static findValidLines(station: Station, destinationShape: StationType, state: GameState): TransitLine[] {
     // Find all lines passing through this specific station
     const stationLines = state.lines.filter(l => l.stations.includes(station.id));
+    const maxDepth = MODE_CONFIG[state.mode].maxTransferDepth;
     
     return stationLines.filter(line => 
-      this.canLineReachDestination(line, destinationShape, PATHFINDING_CONFIG.MAX_TRANSFER_DEPTH, state)
+      this.canLineReachDestination(line, destinationShape, maxDepth, state)
     );
   }
 

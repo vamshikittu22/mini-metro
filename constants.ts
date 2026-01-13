@@ -1,4 +1,6 @@
 
+import { GameMode } from './types';
+
 export const THEME = {
   background: '#F8F4EE', 
   water: '#D8E2EB',      
@@ -50,6 +52,43 @@ export const GAME_CONFIG = {
     tunnels: 2,
     bridges: 1,
     wagons: 2
+  }
+};
+
+export const MODE_CONFIG: Record<GameMode, {
+  spawnMultiplier: number;
+  overflowEnabled: boolean;
+  resourceMultiplier: number;
+  maxTransferDepth: number;
+  infiniteResources: boolean;
+}> = {
+  NORMAL: {
+    spawnMultiplier: 1.0,
+    overflowEnabled: true,
+    resourceMultiplier: 1.0,
+    maxTransferDepth: 2,
+    infiniteResources: false
+  },
+  EXTREME: {
+    spawnMultiplier: 1.5,
+    overflowEnabled: true,
+    resourceMultiplier: 1.0,
+    maxTransferDepth: 1,
+    infiniteResources: false
+  },
+  ENDLESS: {
+    spawnMultiplier: 1.0,
+    overflowEnabled: false,
+    resourceMultiplier: 1.0,
+    maxTransferDepth: 3,
+    infiniteResources: false
+  },
+  CREATIVE: {
+    spawnMultiplier: 0.5,
+    overflowEnabled: false,
+    resourceMultiplier: 2.0,
+    maxTransferDepth: 4,
+    infiniteResources: true
   }
 };
 
