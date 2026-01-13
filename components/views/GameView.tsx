@@ -51,7 +51,7 @@ const DAYS = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'
 export const GameView: React.FC<GameViewProps> = (props) => {
   const { uiState, currentCity } = props;
 
-  // Tiny snapshot for Strategist
+  // Tiny snapshot for Strategist - specifically scoped to geometric and load data
   const strategistSnapshot = {
     stations: uiState.stations.map(s => ({
       id: s.id,
@@ -130,12 +130,12 @@ export const GameView: React.FC<GameViewProps> = (props) => {
         mousePosRef={props.mousePosRef}
       />
 
-      {/* Suggest Line Button */}
+      {/* Suggest Line Button - Explicit trigger for AI line suggestion */}
       <div className="fixed bottom-32 left-8 z-50 flex flex-col gap-2">
         <button 
           onClick={() => props.setShowStrategist(!props.showStrategist)} 
           className="bg-black text-white group flex items-center gap-3 px-4 py-3 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:translate-x-1 hover:translate-y-1 hover:shadow-none transition-all" 
-          title="Suggest Line"
+          title="Suggest Optimization Line"
         >
           <span className="text-xl">🧠</span>
           <span className="hidden group-hover:inline text-[9px] font-black uppercase tracking-widest">Suggest Line</span>
