@@ -165,7 +165,11 @@ const App: React.FC = () => {
         stationTimer: 0,
         analytics: [],
         passengerIdCounter: 0,
-        stationIdCounter: 1000
+        stationIdCounter: 1000,
+        trainIdCounter: 0,
+        animationIdCounter: 0,
+        averageWaitTime: 0,
+        overloadedStationsCount: 0
       });
       engineRef.current = engine;
       dispatch({ type: 'SYNC', payload: engine.state });

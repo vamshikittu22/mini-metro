@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { GameState, City, Station, Point } from '../../types';
 import { Stats } from '../HUD/Stats';
@@ -68,6 +69,8 @@ export const GameView: React.FC<GameViewProps> = (props) => {
       <Stats 
         score={uiState.score} 
         timeScale={uiState.timeScale} 
+        averageWaitTime={uiState.averageWaitTime}
+        overloadedStationsCount={uiState.overloadedStationsCount}
         onSpeedChange={props.onSpeedChange} 
       />
 

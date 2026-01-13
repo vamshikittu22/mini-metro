@@ -112,8 +112,13 @@ export interface GameState {
   passengerTimer: number;
   stationTimer: number;
   analytics: LogEntry[];
-  // Added for Save/Resume continuity
+  // Counters for deterministic ID generation
   passengerIdCounter: number;
   stationIdCounter: number;
+  trainIdCounter: number;
+  animationIdCounter: number;
   lastSaved?: number;
+  // Metrics
+  averageWaitTime: number;
+  overloadedStationsCount: number;
 }

@@ -30,7 +30,11 @@ export class GameEngine {
       stationTimer: initialState.stationTimer || 0,
       analytics: initialState.analytics || [],
       passengerIdCounter: initialState.passengerIdCounter || 0,
-      stationIdCounter: initialState.stationIdCounter || 1000
+      stationIdCounter: initialState.stationIdCounter || 1000,
+      trainIdCounter: initialState.trainIdCounter || 0,
+      animationIdCounter: initialState.animationIdCounter || 0,
+      averageWaitTime: initialState.averageWaitTime || 0,
+      overloadedStationsCount: initialState.overloadedStationsCount || 0
     };
     
     this.previousTimeScale = this.state.timeScale > 0 ? this.state.timeScale : 1;
@@ -80,6 +84,7 @@ export class GameEngine {
     this.updateTrains(dt);
     this.updateStations(dt);
     this.updateAnimations(currentTime);
+    this.calculateRealtimeMetrics();
     this.checkFailure();
 
     if (currentTime - this.lastAuditTime > 5000) {
@@ -91,6 +96,26 @@ export class GameEngine {
       this.logAnalytics(currentTime);
       this.lastLogTime = currentTime;
     }
+  }
+
+  calculateRealtimeMetrics() {
+    const now = Date.now();
+    let totalWait = 0;
+    let totalPassengers = 0;
+    let overloaded = 0;
+
+    this.state.stations.forEach(station => {
+      station.waitingPassengers.forEach(p => {
+        totalWait += (now - p.spawnTime);
+        totalPassengers++;
+      });
+      if (station.timer > 0) {
+        overloaded++;
+      }
+    });
+
+    this.state.averageWaitTime = totalPassengers > 0 ? (totalWait / totalPassengers) / 1000 : 0;
+    this.state.overloadedStationsCount = overloaded;
   }
 
   logAnalytics(timestamp: number) {
@@ -335,7 +360,7 @@ export class GameEngine {
         const jitterY = (Math.random() * 16) - 8;
 
         this.state.scoreAnimations.push({ 
-          id: Math.random(), 
+          id: this.state.animationIdCounter++, 
           x: station.x + jitterX, 
           y: station.y + jitterY, 
           startTime: Date.now(),
@@ -518,7 +543,7 @@ export class GameEngine {
     const line = this.state.lines.find(l => l.id === lineId);
     if (line && (this.state.resources.trains > 0 || MODE_CONFIG[this.state.mode].infiniteResources)) {
       line.trains.push({ 
-        id: Math.random(), 
+        id: this.state.trainIdCounter++, 
         lineId, 
         nextStationIndex: 1, 
         progress: 0, 
