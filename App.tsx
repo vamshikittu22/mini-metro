@@ -266,7 +266,7 @@ const App: React.FC = () => {
             activeLineIdx={activeLineIdx}
             setActiveLineIdx={setActiveLineIdx}
             syncStateImmediate={syncStateImmediate}
-            onSpeedChange={(s) => { if(engineRef.current) engineRef.current.state.timeScale = s; syncStateImmediate(); }}
+            onSpeedChange={(s) => { if(engineRef.current) engineRef.current.setTimeScale(s); syncStateImmediate(); }}
             onAddTrain={() => { engineRef.current?.addTrainToLine(activeLineIdx); syncStateImmediate(); }}
             onRemoveTrain={(id) => { engineRef.current?.removeTrainFromLine(activeLineIdx, id); syncStateImmediate(); }}
             onDeleteLine={() => { engineRef.current?.removeLine(activeLineIdx); syncStateImmediate(); }}

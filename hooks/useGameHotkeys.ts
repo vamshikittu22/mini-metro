@@ -1,6 +1,6 @@
 
 // Fix: Added React import to satisfy namespace references for MutableRefObject
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect } from 'react';
 import { GameEngine } from '../services/gameEngine';
 import { Renderer } from '../services/renderer';
 import { PersistenceManager } from '../services/persistenceManager';
@@ -30,7 +30,6 @@ export const useGameHotkeys = ({
   onBackToMenu,
   camera
 }: HotkeyProps) => {
-  const prevSpeedRef = useRef(1);
 
   useEffect(() => {
     // Only register shortcuts when in the game view
@@ -40,7 +39,6 @@ export const useGameHotkeys = ({
       const engine = engineRef.current;
       if (!engine) return;
 
-      const state = engine.state;
       const key = e.key.toLowerCase();
 
       // Avoid triggering shortcuts when typing in an input
@@ -51,31 +49,23 @@ export const useGameHotkeys = ({
       switch (key) {
         case ' ': // Pause/Play toggle
           e.preventDefault();
-          if (state.timeScale > 0) {
-            prevSpeedRef.current = state.timeScale;
-            state.timeScale = 0;
-          } else {
-            state.timeScale = prevSpeedRef.current || 1;
-          }
+          engine.togglePause();
           syncStateImmediate();
           break;
 
         case '1': // Normal speed
-          state.timeScale = 1;
-          prevSpeedRef.current = 1;
+          engine.setTimeScale(1);
           syncStateImmediate();
           break;
 
         case '2': // 2x speed
-          state.timeScale = 2;
-          prevSpeedRef.current = 2;
+          engine.setTimeScale(2);
           syncStateImmediate();
           break;
 
         case '3': // 4x speed
         case '4':
-          state.timeScale = 4;
-          prevSpeedRef.current = 4;
+          engine.setTimeScale(4);
           syncStateImmediate();
           break;
 
@@ -86,7 +76,6 @@ export const useGameHotkeys = ({
 
         case 'z': // Undo / Redo
           // Handle Ctrl+Z / Cmd+Z and Ctrl+Shift+Z / Cmd+Shift+Z
-          // Fix: Removed unreachable comparison (key === 'y') inside 'case z'
           if (e.shiftKey || e.ctrlKey || e.metaKey) {
             if (e.shiftKey) {
               engine.redo();
@@ -111,7 +100,7 @@ export const useGameHotkeys = ({
           break;
 
         case 's': // Manual Sync (Save)
-          PersistenceManager.saveGame(state, camera);
+          PersistenceManager.saveGame(engine.state, camera);
           break;
 
         case 'escape': // Return to Main Menu

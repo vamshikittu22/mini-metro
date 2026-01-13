@@ -20,6 +20,7 @@ export class GameEngine {
   usedNames: Set<string> = new Set();
   router: HybridGreedyRouter;
   historyManager: HistoryManager;
+  private previousTimeScale: number = 1;
   
   constructor(initialState: GameState) {
     this.state = {
@@ -32,10 +33,34 @@ export class GameEngine {
       stationIdCounter: initialState.stationIdCounter || 1000
     };
     
+    this.previousTimeScale = this.state.timeScale > 0 ? this.state.timeScale : 1;
     this.usedNames = new Set();
     this.state.stations.forEach(s => this.usedNames.add(s.name));
     this.router = new HybridGreedyRouter();
     this.historyManager = new HistoryManager();
+  }
+
+  /**
+   * Sets the game simulation speed.
+   * If scale > 0, it is cached as the 'active' speed for pause toggling.
+   */
+  setTimeScale(scale: number) {
+    if (scale > 0) {
+      this.previousTimeScale = scale;
+    }
+    this.state.timeScale = scale;
+  }
+
+  /**
+   * Toggles between paused (0) and the last active speed.
+   */
+  togglePause() {
+    if (this.state.timeScale > 0) {
+      this.previousTimeScale = this.state.timeScale;
+      this.state.timeScale = 0;
+    } else {
+      this.state.timeScale = this.previousTimeScale || 1;
+    }
   }
 
   update(currentTime: number) {
