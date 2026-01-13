@@ -1,5 +1,4 @@
-
-import React, { Component, ErrorInfo, ReactNode } from 'react';
+import React, { ErrorInfo, ReactNode } from 'react';
 
 interface Props {
   children?: ReactNode;
@@ -14,8 +13,8 @@ interface State {
  * ErrorBoundary component to catch runtime errors and display a fallback UI.
  * Inherits from React.Component with explicit generic types for props and state.
  */
-// Fix: Extending Component directly from the react import to ensure 'props' and 'state' are correctly recognized.
-export class ErrorBoundary extends Component<Props, State> {
+// Explicitly use React.Component to ensure that props and state are correctly inherited and typed.
+export class ErrorBoundary extends React.Component<Props, State> {
   // Explicitly initialize state as a class property to ensure TypeScript 
   // correctly recognizes and types 'this.state' throughout the component lifecycle.
   state: State = {

@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { THEME } from '../../constants';
 import { TransitLine, Station } from '../../types';
@@ -185,7 +184,14 @@ export const ResourcePanel: React.FC<ResourcePanelProps> = ({
   }
 };
 
-const InvItem = ({ code, val, label, onClick }: any) => (
+interface InvItemProps {
+  code: string;
+  val: number;
+  label: string;
+  onClick: () => void;
+}
+
+const InvItem: React.FC<InvItemProps> = ({ code, val, label, onClick }) => (
   <div onClick={onClick} className="bg-white px-4 py-3 flex items-center gap-3 cursor-pointer border-2 border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] group transition-all">
     <div className="w-5 h-5 bg-black text-white flex items-center justify-center text-[9px] font-black group-hover:bg-emerald-500 transition-all">{code}</div>
     <div className="flex flex-col">

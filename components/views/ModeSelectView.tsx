@@ -26,7 +26,13 @@ export const ModeSelectView: React.FC<ModeSelectViewProps> = ({ selectedMode, on
   );
 };
 
-const ModeItem = ({ label, active, onClick }: any) => (
+interface ModeItemProps {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}
+
+const ModeItem: React.FC<ModeItemProps> = ({ label, active, onClick }) => (
   <div onClick={onClick} className={`cursor-pointer transition-all ${active ? 'bg-blue-600 px-16 py-4' : 'opacity-40 hover:opacity-100'}`}>
     <span className={`text-6xl font-black uppercase tracking-tighter ${active ? 'text-white' : 'text-white/40'}`}>{label}</span>
   </div>
