@@ -60,6 +60,61 @@ export class SystemValidator {
   }
 
   /**
+   * Quantifies the system's structural integrity.
+   * 100 = Perfect resource accounting.
+   * Drops based on discrepancies and network bottlenecks.
+   */
+  static calculateIntegrityScore(state: GameState, city: City): number {
+    if (MODE_CONFIG[state.mode].infiniteResources) return 100;
+
+    // Resource Discrepancy Component
+    const active = {
+      lines: state.lines.length,
+      trains: 0,
+      wagons: 0,
+      tunnels: 0,
+      bridges: 0,
+    };
+
+    let waterCrossings = 0;
+    state.lines.forEach(line => {
+      active.trains += line.trains.length;
+      active.wagons += line.trains.reduce((sum, t) => sum + t.wagons, 0);
+      for (let i = 0; i < line.stations.length - 1; i++) {
+        const s1 = state.stations.find(s => s.id === line.stations[i]);
+        const s2 = state.stations.find(s => s.id === line.stations[i + 1]);
+        if (s1 && s2 && isSegmentCrossingWater(s1, s2, city)) waterCrossings++;
+      }
+    });
+
+    let remainingCrossings = waterCrossings;
+    const tunnelBudget = Math.min(remainingCrossings, state.totalResources.tunnels);
+    remainingCrossings -= tunnelBudget;
+    const bridgeBudget = Math.min(remainingCrossings, state.totalResources.bridges);
+
+    const resourceKeys = ['lines', 'trains', 'tunnels', 'bridges', 'wagons'] as const;
+    let discrepancies = 0;
+    resourceKeys.forEach(key => {
+      let calcActive = active[key];
+      if (key === 'tunnels') calcActive = tunnelBudget;
+      if (key === 'bridges') calcActive = bridgeBudget;
+      
+      const calculatedAvailable = state.totalResources[key] - calcActive;
+      if (state.resources[key] !== calculatedAvailable) discrepancies++;
+    });
+
+    // Score Calculation:
+    // Discrepancies reduce the score (Primary factor)
+    let score = 100 - (discrepancies * 20);
+    
+    // Efficiency Component: Overloaded stations also impact "Integrity" of service
+    const overloadedRatio = state.overloadedStationsCount / (state.stations.length || 1);
+    score -= (overloadedRatio * 30); // Max -30 for complete overload
+
+    return Math.max(0, Math.round(score));
+  }
+
+  /**
    * Pathfinding Stress Test: Headless verification of the routing engine using Hybrid Greedy logic.
    * Simulates 100 passengers and calculates reachability rate.
    */

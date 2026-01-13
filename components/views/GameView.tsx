@@ -125,6 +125,7 @@ export const GameView: React.FC<GameViewProps> = (props) => {
            <h4 className="text-[10px] font-black uppercase mb-4 tracking-widest border-b border-black pb-2 text-black">System Audit & Integrity</h4>
            <div className="mb-4 p-2 bg-black/5 text-[9px] font-mono leading-tight border border-black/10 text-black font-bold">
              STATUS: {SystemValidator.validateSystemState(uiState, currentCity!) ? 'OPTIMAL' : 'ADJUSTING'} <br/>
+             INTEGRITY: {SystemValidator.calculateIntegrityScore(uiState, currentCity!)}% <br/>
              VERIFICATION CYCLE: 5.0s
            </div>
            {Object.entries(uiState.totalResources).map(([k, v]) => (
