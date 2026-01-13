@@ -17,11 +17,12 @@ import { MainMenuView } from './components/views/MainMenuView';
 import { CitySelectView } from './components/views/CitySelectView';
 import { ModeSelectView } from './components/views/ModeSelectView';
 import { GameView } from './components/views/GameView';
+import { CaseStudyView } from './components/views/CaseStudyView';
 
 // Import the hotkeys hook
 import { useGameHotkeys } from './hooks/useGameHotkeys';
 
-type AppView = 'MAIN_MENU' | 'CITY_SELECT' | 'MODE_SELECT' | 'GAME';
+type AppView = 'MAIN_MENU' | 'CITY_SELECT' | 'MODE_SELECT' | 'GAME' | 'CASE_STUDY';
 
 // Reducer for syncing game state to UI safely
 type Action = { type: 'SYNC'; payload: GameState };
@@ -241,6 +242,7 @@ const App: React.FC = () => {
             saveInfo={saveInfo} 
             onNewConnection={() => setView('CITY_SELECT')} 
             onResume={resumeGame} 
+            onCaseStudy={() => setView('CASE_STUDY')}
           />
         )}
 
@@ -256,6 +258,12 @@ const App: React.FC = () => {
             selectedMode={selectedMode} 
             onModeSelect={setSelectedMode} 
             onStart={startGame} 
+          />
+        )}
+
+        {view === 'CASE_STUDY' && (
+          <CaseStudyView 
+            onBack={() => setView('MAIN_MENU')} 
           />
         )}
 

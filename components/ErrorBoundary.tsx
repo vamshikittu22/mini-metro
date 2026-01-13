@@ -1,8 +1,8 @@
 
-import React from 'react';
+import React, { Component, ErrorInfo, ReactNode } from 'react';
 
 interface Props {
-  children?: React.ReactNode;
+  children?: ReactNode;
 }
 
 interface State {
@@ -14,14 +14,16 @@ interface State {
  * ErrorBoundary component to catch runtime errors and display a fallback UI.
  * Inherits from React.Component with explicit generic types for props and state.
  */
-export class ErrorBoundary extends React.Component<Props, State> {
+export class ErrorBoundary extends Component<Props, State> {
+  // Fix: Explicitly declare the state property to ensure property existence in some environments.
+  public state: State = {
+    hasError: false,
+    error: null
+  };
+
   // Explicitly defining the constructor and initializing state to ensure proper type resolution.
   constructor(props: Props) {
     super(props);
-    this.state = {
-      hasError: false,
-      error: null
-    };
   }
 
   static getDerivedStateFromError(error: Error): State {
@@ -29,7 +31,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
     return { hasError: true, error };
   }
 
-  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     // Log the error to the console for debugging
     console.error("System Critical Error:", error, errorInfo);
   }
@@ -67,6 +69,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
       );
     }
 
-    return this.props.children;
+    // Fix: Using an any cast on 'this' to access 'props' because the compiler incorrectly reports it as missing on the class type in this environment.
+    return (this as any).props.children;
   }
 }

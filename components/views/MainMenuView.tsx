@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { LoadingScreen } from '../LoadingScreen';
 
@@ -6,13 +7,15 @@ interface MainMenuViewProps {
   saveInfo: { exists: boolean; time?: string };
   onNewConnection: () => void;
   onResume: () => void;
+  onCaseStudy: () => void;
 }
 
 export const MainMenuView: React.FC<MainMenuViewProps> = ({ 
   isLoading, 
   saveInfo, 
   onNewConnection, 
-  onResume 
+  onResume,
+  onCaseStudy
 }) => {
   return (
     <div className="fixed inset-0 bg-[#1A1A1A] flex flex-col items-start justify-center p-24 select-none">
@@ -27,6 +30,7 @@ export const MainMenuView: React.FC<MainMenuViewProps> = ({
         >
           Resume {saveInfo.time && <span className="text-[16px] lowercase opacity-50 ml-2">({saveInfo.time})</span>}
         </MenuBtn>
+        <MenuBtn icon="◎" onClick={onCaseStudy}>Case Study</MenuBtn>
         <MenuBtn icon="→" onClick={() => {}}>Daily Challenge</MenuBtn>
         <MenuBtn icon="↓" onClick={() => {}}>Options</MenuBtn>
         <MenuBtn icon="↙" onClick={() => {}}>Exit</MenuBtn>
