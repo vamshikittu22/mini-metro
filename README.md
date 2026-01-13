@@ -1,76 +1,65 @@
-
 # 🚇 MINI METRO ▲ WEB
+### High-Fidelity Minimalist Transit Simulation Engine
 
-![Build Status](https://img.shields.io/badge/build-passing-brightgreen)
-![Version](https://img.shields.io/badge/version-1.1.0-blue)
-![License](https://img.shields.io/badge/license-MIT-green)
-![TypeScript](https://img.shields.io/badge/TypeScript-5.8.2-blue)
-![React](https://img.shields.io/badge/React-19.2.3-61DAFB)
+![Project Status](https://img.shields.io/badge/status-stable-brightgreen)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.8-blue)
+![React](https://img.shields.io/badge/React-19.2-61DAFB)
 ![AI](https://img.shields.io/badge/AI-Gemini_3_Pro-orange)
 
-> A high-fidelity, minimalist transit simulation engine built with modern web technologies. Strategize, expand, and optimize metropolitan rail networks across the world's greatest cities.
+> **Mini Metro ▲ Web** is a creative technology project that re-imagines the iconic transit strategy game through the lens of Swiss Modernism and futuristic UI/UX. Built as a high-performance simulation engine, it challenges players to design efficient subway networks for rapidly growing global metropolises.
 
 ---
 
-## 📋 Table of Contents
-- [1. Overview](#1-overview)
-- [2. Features & Functionalities](#2-features--functionalities)
-- [3. Tech Stack](#3-tech-stack)
-- [4. Architecture & Design Patterns](#4-architecture--design-patterns)
-- [5. Gameplay Guide](#7-gameplay-guide)
-- [6. Game Mechanics](#9-game-mechanics-deep-dive)
-- [7. API Integration](#11-api-integration)
+## 💎 Design Philosophy
+The application adheres to the **International Typographic Style** (Swiss Design):
+- **Precision Topology**: Clean, geometric lines and abstract station shapes.
+- **Futuristic Utility**: A high-contrast, brutalist UI that prioritizes information density and clarity.
+- **Aesthetic Simulation**: Smooth, hardware-accelerated animations paired with a soothing, minimal color palette.
 
 ---
 
-## 1. Overview
-**Mini Metro ▲ Web** is a minimalist transit simulation engine. It challenges players to design an efficient subway layout for a rapidly growing city, focusing on the abstract elegance of transit maps where efficiency is measured in throughput.
+## 🚀 Technical Architecture
 
-### Key Differentiators
-- **AI Line Suggestion**: Powered by Google Gemini, providing a technical proposal for a single new transit line based on current network congestion.
-- **Data Analytics**: Export detailed Markdown reports of your system's performance and throughput history.
-- **Hybrid Greedy Pathfinding**: A sophisticated routing engine simulating realistic passenger behavior.
+### ⚡ Performance Core
+- **Canvas 2D Rendering**: Uses a custom **Dirty Rectangle Optimization** strategy. Instead of redrawing the entire world every frame, the engine identifies moving trains and pulsing timers, updating only the affected pixels.
+- **Hybrid Greedy Pathfinding**: A custom routing algorithm that simulates realistic passenger behavior. Passengers evaluate wait times, transfer penalties, and directional flow before deciding whether to board or alight.
+- **Offscreen Buffer Caching**: Static elements like geographic bounds, grid lines, and water bodies are cached in offscreen canvases to maintain a steady 60FPS even with complex networks.
 
----
-
-## 2. Features & Functionalities
-
-### 🎮 Core Gameplay
-- **Real-world Maps**: 7 cities (London, Paris, NYC, Tokyo, Berlin, Hong Kong, Cairo) with accurate geographic bounds.
-- **Dynamic Spawning**: Stations and passengers spawn based on weighted probability.
-- **Resource Inventory**: Strategic management of Locomotives, Wagons, Tunnels, and Bridges.
-- **Weekly Reward System**: Level-up loop offering strategic expansion choices.
-
-### 🕹️ Game Modes
-- **NORMAL**: Balanced growth and difficulty scaling.
-- **EXTREME**: Higher spawn rate and accelerated overflow timers.
-- **ENDLESS**: Focus purely on network efficiency without failure states.
-- **CREATIVE**: Unlimited resources for free-form design.
+### 🧠 Strategic Intelligence (Gemini AI)
+The "Topology Advisor" feature leverages the **Google Gemini 3 Pro** model to assist players with network bottlenecks. 
+- **Trigger-Based Analysis**: On-demand snapshots of station coordinates, types, and current passenger loads are sent to the AI.
+- **Route Optimization**: The AI returns a structured JSON recommendation for a single new transit line, complete with an engineering rationale explaining why that specific path resolves system stress.
 
 ---
 
-## 3. Tech Stack
-- **Frontend Framework**: React 19.2.3
-- **Language**: TypeScript 5.8.2
-- **Styling**: TailwindCSS
-- **AI Integration**: @google/genai (Gemini 3 Pro)
-- **Rendering**: Native HTML5 Canvas 2D API
+## 🗺️ Global Simulations
+Strategize across seven accurately mapped global hubs:
+- **London**: Navigate the winding Thames with limited tunnel resources.
+- **Tokyo**: Handle extreme density and complex multi-modal transfers.
+- **NYC**: Optimize the grid-based island topology of Manhattan.
+- **Paris, Berlin, Hong Kong, Cairo**: Each city features unique geographic constraints and difficulty scaling.
 
 ---
 
-## 4. API Integration
-The **Strategist** helper uses the `gemini-3-pro-preview` model. When manually triggered, it analyzes a snapshot of the current network (station types, loads, and existing connections) to suggest a single optimized route.
-- **Triggered Only**: AI is only invoked on explicit user request via the "Suggest Line" button.
-- **JSON Structured Output**: Responses are strictly parsed as structured data to provide a path of station IDs and a technical rationale.
+## ⌨️ Operator Controls
+| Key | Action |
+| :--- | :--- |
+| **SPACE** | Pause / Resume System Time |
+| **1 - 4** | Adjust Simulation Speed |
+| **TAB** | Cycle Active Transit Line |
+| **Z / Y** | Topology Undo / Redo |
+| **DRAG** | Create / Extend Transit Lines |
+| **RIGHT CLICK** | Sever Line Segment |
 
 ---
 
-## 5. Performance Optimization
-- **Dirty Rectangle Optimization**: The renderer only updates regions of the canvas that have changed (trains, timers, animations).
-- **Static Background Caching**: Grid and water elements are rendered to an offscreen buffer.
-- **Pathfinding Cache**: Reachability results are memoized to ensure smooth 60FPS simulation.
+## 🛠️ Tech Stack
+- **Framework**: React 19 (Hooks, Reducers, Refs for Engine Sync)
+- **Engine**: Pure TypeScript 5.8 (Class-based Simulation)
+- **Intelligence**: @google/genai (Gemini 3 Pro Preview)
+- **Styling**: TailwindCSS (Custom Swiss-Design configuration)
 
 ---
 
-**Built with ▲ by Vamshi Krishna**
-*(Mini Metro is a registered trademark of Dinosaur Polo Club. This project is a non-commercial educational work.)*
+**Creative Technologist**: Vamshi Krishna
+*Educational project inspired by the original Mini Metro by Dinosaur Polo Club.*

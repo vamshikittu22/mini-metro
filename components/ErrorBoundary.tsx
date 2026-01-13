@@ -1,8 +1,8 @@
 
-import React, { Component, ErrorInfo, ReactNode } from 'react';
+import React from 'react';
 
 interface Props {
-  children?: ReactNode;
+  children?: React.ReactNode;
 }
 
 interface State {
@@ -14,8 +14,7 @@ interface State {
  * ErrorBoundary component to catch runtime errors and display a fallback UI.
  * Inherits from React.Component with explicit generic types for props and state.
  */
-// Fix: Import Component directly and extend it to ensure inherited members like 'props' and 'state' are correctly recognized by the compiler.
-export class ErrorBoundary extends Component<Props, State> {
+export class ErrorBoundary extends React.Component<Props, State> {
   // Explicitly defining the constructor and initializing state to ensure proper type resolution.
   constructor(props: Props) {
     super(props);
@@ -30,19 +29,14 @@ export class ErrorBoundary extends Component<Props, State> {
     return { hasError: true, error };
   }
 
-  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
     // Log the error to the console for debugging
     console.error("System Critical Error:", error, errorInfo);
   }
 
   render() {
-    // Destructure state and props from this.
-    // Fix: Using destructuring from this.state which is correctly inherited.
-    const { hasError, error } = this.state;
-    // Fix: Accessing children from this.props which is correctly inherited from Component.
-    const { children } = this.props;
-
-    if (hasError) {
+    // Access state and props directly from 'this' to resolve property existence errors.
+    if (this.state.hasError) {
       return (
         <div className="fixed inset-0 z-[999] bg-[#F8F4EE] flex items-center justify-center p-12 font-sans select-none">
           <div className="bg-white border-4 border-black p-12 shadow-[16px_16px_0px_0px_rgba(0,0,0,1)] max-w-2xl w-full animate-in zoom-in-95 flex flex-col gap-8">
@@ -57,8 +51,8 @@ export class ErrorBoundary extends Component<Props, State> {
                 A critical runtime error has disrupted the transit network.
               </p>
               <div className="bg-black/5 border-l-4 border-black p-4 font-mono text-[10px] uppercase text-black/70 overflow-auto max-h-32 whitespace-pre-wrap">
-                {error?.message || "Unknown Error Sequence"}
-                {error?.stack && `\n\n${error.stack.split('\n')[0]}`}
+                {this.state.error?.message || "Unknown Error Sequence"}
+                {this.state.error?.stack && `\n\n${this.state.error.stack.split('\n')[0]}`}
               </div>
             </div>
 
@@ -73,6 +67,6 @@ export class ErrorBoundary extends Component<Props, State> {
       );
     }
 
-    return children;
+    return this.props.children;
   }
 }
