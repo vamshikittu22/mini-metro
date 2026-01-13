@@ -10,27 +10,35 @@ interface State {
   error: Error | null;
 }
 
-// Fix: Inheriting from Component with generic types to ensure state and props are correctly resolved by TypeScript
+/**
+ * ErrorBoundary component to catch runtime errors and display a fallback UI.
+ * Inherits from React.Component with explicit generic types for props and state.
+ */
+// Fix: Extending Component directly from the react import to ensure 'props' and 'state' are correctly recognized.
 export class ErrorBoundary extends Component<Props, State> {
+  // Explicitly initialize state as a class property to ensure TypeScript 
+  // correctly recognizes and types 'this.state' throughout the component lifecycle.
+  state: State = {
+    hasError: false,
+    error: null
+  };
+
   constructor(props: Props) {
     super(props);
-    // Initializing state within constructor
-    this.state = {
-      hasError: false,
-      error: null
-    };
   }
 
   static getDerivedStateFromError(error: Error): State {
+    // Update state so the next render will show the fallback UI.
     return { hasError: true, error };
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    // Log the error to the console for debugging
     console.error("System Critical Error:", error, errorInfo);
   }
 
   render() {
-    // Accessing hasError through this.state
+    // Accessing hasError through this.state to determine whether to render fallback UI
     if (this.state.hasError) {
       return (
         <div className="fixed inset-0 z-[999] bg-[#F8F4EE] flex items-center justify-center p-12 font-sans select-none">
@@ -46,7 +54,7 @@ export class ErrorBoundary extends Component<Props, State> {
                 A critical runtime error has disrupted the transit network.
               </p>
               <div className="bg-black/5 border-l-4 border-black p-4 font-mono text-[10px] uppercase text-black/70 overflow-auto max-h-32 whitespace-pre-wrap">
-                {/* Accessing error message and stack through this.state */}
+                {/* Accessing error details from this.state */}
                 {this.state.error?.message || "Unknown Error Sequence"}
                 {this.state.error?.stack && `\n\n${this.state.error.stack.split('\n')[0]}`}
               </div>
@@ -63,7 +71,7 @@ export class ErrorBoundary extends Component<Props, State> {
       );
     }
 
-    // Accessing children through this.props
+    // Accessing children through this.props to render the normal app tree
     return this.props.children;
   }
 }

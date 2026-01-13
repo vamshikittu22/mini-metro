@@ -1,27 +1,39 @@
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { GameState, Station, City, Point, GameMode, LogEntry } from './types';
+import React, { useState, useEffect, useRef, useReducer } from 'react';
+import { GameState, Station, City, Point, GameMode } from './types';
 import { CITIES } from './data/cities';
-import { project, getDistance, distToSegment } from './services/geometry';
+import { project } from './services/geometry';
 import { GameEngine } from './services/gameEngine';
 import { Renderer } from './services/renderer';
-import { Strategist } from './components/Strategist';
-import { Stats } from './components/HUD/Stats';
-import { ResourcePanel } from './components/HUD/ResourcePanel';
-import { SystemValidator } from './services/validation';
 import { THEME, GAME_CONFIG } from './constants';
 import { DataLogger } from './services/dataLogger';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { LoadingScreen } from './components/LoadingScreen';
-import { GameCanvas } from './components/GameCanvas';
-import { KeyboardHints } from './components/HUD/KeyboardHints';
 import { MobileWarning } from './components/MobileWarning';
 import { Toast } from './components/UI/Toast';
-import { PersistenceManager, SaveData } from './services/persistenceManager';
+import { PersistenceManager } from './services/persistenceManager';
+
+// Import newly extracted views
+import { MainMenuView } from './components/views/MainMenuView';
+import { CitySelectView } from './components/views/CitySelectView';
+import { ModeSelectView } from './components/views/ModeSelectView';
+import { GameView } from './components/views/GameView';
+
+// Import the hotkeys hook
+import { useGameHotkeys } from './hooks/useGameHotkeys';
 
 type AppView = 'MAIN_MENU' | 'CITY_SELECT' | 'MODE_SELECT' | 'GAME';
 
-const DAYS = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'];
+// Reducer for syncing game state to UI safely
+type Action = { type: 'SYNC'; payload: GameState };
+function stateReducer(state: GameState | null, action: Action): GameState | null {
+  switch (action.type) {
+    case 'SYNC':
+      // Return a shallow copy to trigger React update
+      return { ...action.payload };
+    default:
+      return state;
+  }
+}
 
 const App: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -38,15 +50,11 @@ const App: React.FC = () => {
   const [showAudit, setShowAudit] = useState(false);
   const [showStrategist, setShowStrategist] = useState(false);
   
-  const [uiState, setUiState] = useState<GameState | null>(null);
-  const [, setThrowError] = useState<void>();
+  const [uiState, dispatch] = useReducer(stateReducer, null);
   const [isLoading, setIsLoading] = useState(false);
-  const [isFadingOut, setIsFadingOut] = useState(false);
   const [saveInfo, setSaveInfo] = useState<{ exists: boolean, time?: string }>({ exists: false });
-  
   const [toast, setToast] = useState<{ msg: string, visible: boolean }>({ msg: '', visible: false });
 
-  const [dimensions, setDimensions] = useState({ width: window.innerWidth, height: window.innerHeight });
   const [isDragging, setIsDragging] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
   const [dragStart, setDragStart] = useState<Station | null>(null);
@@ -56,6 +64,27 @@ const App: React.FC = () => {
   const showToast = (msg: string) => {
     setToast({ msg, visible: true });
   };
+
+  const syncStateImmediate = () => {
+    if (engineRef.current) {
+      dispatch({ type: 'SYNC', payload: engineRef.current.state });
+    }
+  };
+
+  // Initialize Hotkeys
+  useGameHotkeys({
+    view,
+    engineRef,
+    rendererRef,
+    activeLineIdx,
+    setActiveLineIdx,
+    syncStateImmediate,
+    onBackToMenu: () => {
+      if (engineRef.current) PersistenceManager.saveGame(engineRef.current.state, camera);
+      setView('MAIN_MENU');
+    },
+    camera
+  });
 
   useEffect(() => {
     const data = PersistenceManager.loadGame();
@@ -69,15 +98,6 @@ const App: React.FC = () => {
       setSaveInfo({ exists: false });
     }
   }, [view]);
-
-  const initGame = (city: City) => {
-    setCurrentCity(city);
-    setView('MODE_SELECT');
-  };
-
-  const restartGame = () => {
-    if (currentCity) startGame();
-  };
 
   const resumeGame = () => {
     const saveData = PersistenceManager.loadGame();
@@ -93,22 +113,18 @@ const App: React.FC = () => {
       setSelectedMode(saveData.state.mode);
       setCamera(saveData.camera);
 
-      // Explicitly initialize engine with loaded state including counters
       const engine = new GameEngine(saveData.state);
       engineRef.current = engine;
-      setUiState({ ...engine.state });
+      dispatch({ type: 'SYNC', payload: engine.state });
       
       setView('GAME');
       setIsLoading(false);
-      setIsFadingOut(true);
-      setTimeout(() => setIsFadingOut(false), 500);
       showToast("System Restored");
     }, 1200);
   };
 
   const startGame = () => {
     if (!currentCity) return;
-    
     setIsLoading(true);
 
     setTimeout(() => {
@@ -152,147 +168,30 @@ const App: React.FC = () => {
         stationIdCounter: 1000
       });
       engineRef.current = engine;
-      setUiState({ ...engine.state });
+      dispatch({ type: 'SYNC', payload: engine.state });
       
       const minX = Math.min(...initialStations.map(s => s.x));
       const maxX = Math.max(...initialStations.map(s => s.x));
       const minY = Math.min(...initialStations.map(s => s.y));
       const maxY = Math.max(...initialStations.map(s => s.y));
-      
       const initialScale = Math.min(0.6, (window.innerWidth * 0.7) / (maxX - minX || 1));
       setCamera({ x: window.innerWidth / 2 - ((minX + maxX) / 2) * initialScale, y: window.innerHeight / 2 - ((minY + maxY) / 2) * initialScale, scale: initialScale });
       
       setView('GAME');
-      
       setIsLoading(false);
-      setIsFadingOut(true);
-      setTimeout(() => setIsFadingOut(false), 500);
-
     }, 2000);
   };
 
-  const handleDownloadAnalysis = () => {
-    if (engineRef.current && currentCity) {
-      DataLogger.downloadReport(engineRef.current.state, currentCity);
-    }
-  };
-
-  const syncStateImmediate = () => {
-    if (engineRef.current) setUiState({ ...engineRef.current.state });
-  };
-
-  // Improved autosave loop with status indicator
   useEffect(() => {
     if (view !== 'GAME' || !engineRef.current) return;
-
     const saveInterval = setInterval(() => {
       if (engineRef.current && engineRef.current.state.gameActive && !engineRef.current.state.isPausedForReward) {
         PersistenceManager.saveGame(engineRef.current.state, camera);
         showToast("System Sync Completed");
       }
     }, 45000); 
-
     return () => clearInterval(saveInterval);
   }, [view, camera]);
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (view !== 'GAME' || !engineRef.current) return;
-
-      if ((e.metaKey || e.ctrlKey) && e.code === 'KeyZ') {
-        e.preventDefault();
-        if (e.shiftKey) {
-          const msg = engineRef.current.redo();
-          if (msg) {
-            showToast(msg);
-            syncStateImmediate();
-          }
-        } else {
-          const msg = engineRef.current.undo();
-          if (msg) {
-            showToast(msg);
-            syncStateImmediate();
-          }
-        }
-        return;
-      }
-
-      switch (e.code) {
-        case 'Space':
-          e.preventDefault();
-          if (engineRef.current) {
-            const currentScale = engineRef.current.state.timeScale;
-            engineRef.current.state.timeScale = currentScale === 0 ? 1 : 0;
-            syncStateImmediate();
-          }
-          break;
-        case 'Digit1':
-          if (engineRef.current) {
-            engineRef.current.state.timeScale = 1;
-            syncStateImmediate();
-          }
-          break;
-        case 'Digit2':
-          if (engineRef.current) {
-            engineRef.current.state.timeScale = 2;
-            syncStateImmediate();
-          }
-          break;
-        case 'Digit3':
-          if (engineRef.current) {
-            engineRef.current.state.timeScale = 3;
-            syncStateImmediate();
-          }
-          break;
-        case 'Digit4':
-          if (engineRef.current) {
-            engineRef.current.state.timeScale = 4;
-            syncStateImmediate();
-          }
-          break;
-        case 'Tab':
-          e.preventDefault();
-          setActiveLineIdx(prev => (prev + 1) % 10);
-          break;
-        case 'KeyD':
-          e.preventDefault();
-          if (rendererRef.current) {
-             rendererRef.current.toggleDebug();
-          }
-          break;
-        case 'KeyS':
-          if ((e.metaKey || e.ctrlKey)) {
-            e.preventDefault();
-            if (engineRef.current) {
-              PersistenceManager.saveGame(engineRef.current.state, camera);
-              showToast("Manual State Saved");
-            }
-          }
-          break;
-        case 'Escape':
-          e.preventDefault();
-          if (showStrategist) setShowStrategist(false);
-          else if (showAudit) setShowAudit(false);
-          else {
-            if (engineRef.current) {
-               const currentScale = engineRef.current.state.timeScale;
-               engineRef.current.state.timeScale = currentScale === 0 ? 1 : 0;
-               syncStateImmediate();
-            }
-          }
-          break;
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [view, showStrategist, showAudit, camera]);
-
-  useEffect(() => {
-    const handleResize = () => setDimensions({ width: window.innerWidth, height: window.innerHeight });
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
 
   useEffect(() => {
     if (!canvasRef.current || view !== 'GAME') return;
@@ -301,169 +200,82 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (!currentCity || view !== 'GAME') return;
-    
     let fId: number;
     let lastUiUpdate = 0;
-
     const loop = (t: number) => {
-      try {
-        if (engineRef.current && rendererRef.current && currentCity) { 
-          engineRef.current.update(t); 
-          
-          rendererRef.current.draw(
-            engineRef.current.state, 
-            camera, 
-            currentCity, 
-            { active: isDragging, start: dragStart, current: dragCurrent, activeLineIdx },
-            { hoveredStation: hoveredStationRef.current, mousePos: mousePosRef.current }
-          );
-
-          if (t - lastUiUpdate > 100) {
-            setUiState({ ...engineRef.current.state });
-            lastUiUpdate = t;
-          }
+      if (engineRef.current && rendererRef.current && currentCity) { 
+        engineRef.current.update(t); 
+        rendererRef.current.draw(
+          engineRef.current.state, 
+          camera, 
+          currentCity, 
+          { active: isDragging, start: dragStart, current: dragCurrent, activeLineIdx },
+          { hoveredStation: hoveredStationRef.current, mousePos: mousePosRef.current }
+        );
+        if (t - lastUiUpdate > 100) {
+          syncStateImmediate();
+          lastUiUpdate = t;
         }
-        fId = requestAnimationFrame(loop);
-      } catch (e) {
-        setThrowError(() => { throw e; });
       }
+      fId = requestAnimationFrame(loop);
     };
     fId = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(fId);
   }, [camera, isDragging, isPanning, dragStart, dragCurrent, activeLineIdx, currentCity, view]);
 
-  const handleLineDelete = () => {
-    if (engineRef.current) { engineRef.current.removeLine(activeLineIdx); syncStateImmediate(); }
+  const handleBackToMenu = () => {
+    if (engineRef.current) PersistenceManager.saveGame(engineRef.current.state, camera);
+    setView('MAIN_MENU');
   };
-
-  const handleAddTrain = () => {
-    if (engineRef.current) { engineRef.current.addTrainToLine(activeLineIdx); syncStateImmediate(); }
-  };
-
-  const handleRemoveTrain = (trainId: number) => {
-    if (engineRef.current) { engineRef.current.removeTrainFromLine(activeLineIdx, trainId); syncStateImmediate(); }
-  };
-
-  if (view === 'MAIN_MENU') {
-    return (
-      <div className="fixed inset-0 bg-[#1A1A1A] flex flex-col items-start justify-center p-24 select-none">
-        <LoadingScreen isFading={!isLoading} />
-        <h1 className="text-[120px] font-black tracking-tighter text-white mb-20 leading-none">MINI METRO ▲</h1>
-        <div className="flex flex-col gap-4">
-          <MenuBtn icon="→" onClick={() => setView('CITY_SELECT')}>New Connection</MenuBtn>
-          <MenuBtn 
-            icon="↗" 
-            onClick={saveInfo.exists ? resumeGame : undefined} 
-            className={!saveInfo.exists ? 'opacity-20 cursor-not-allowed grayscale' : ''}
-          >
-            Resume {saveInfo.time && <span className="text-[16px] lowercase opacity-50 ml-2">({saveInfo.time})</span>}
-          </MenuBtn>
-          <MenuBtn icon="→" onClick={() => {}}>Daily Challenge</MenuBtn>
-          <MenuBtn icon="↓" onClick={() => {}}>Options</MenuBtn>
-          <MenuBtn icon="↙" onClick={() => {}}>Exit</MenuBtn>
-        </div>
-      </div>
-    );
-  }
-
-  if (view === 'CITY_SELECT') {
-    return (
-      <div className="fixed inset-0 bg-[#1A1A1A] p-24 text-white overflow-y-auto">
-        <div className="flex justify-between items-center mb-16">
-          <h2 className="text-8xl font-black opacity-20 uppercase tracking-tighter">Cities</h2>
-          <button onClick={() => setView('MAIN_MENU')} className="text-xl font-black uppercase tracking-widest opacity-40 hover:opacity-100 transition-all">Back</button>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-12 pb-20">
-          {CITIES.map(city => (
-            <div key={city.id} onClick={() => initGame(city)} className="cursor-pointer group">
-              <h3 className="text-5xl font-black uppercase tracking-tighter mb-6 group-hover:text-blue-400 transition-colors">{city.name}</h3>
-              <div className="aspect-square bg-white/5 border border-white/10 relative overflow-hidden p-8 transition-all group-hover:border-white/30">
-                <div className="flex gap-2 mb-4">
-                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: THEME.lineColors[0] }} />
-                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: THEME.lineColors[1] }} />
-                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: THEME.lineColors[2] }} />
-                </div>
-                <p className="text-[10px] font-bold opacity-40 uppercase tracking-widest">Difficulty: {Math.floor(city.difficulty * 10)}/10.</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  if (view === 'MODE_SELECT') {
-    return (
-      <div className="fixed inset-0 bg-[#1A1A1A] flex flex-col items-center justify-center p-24 text-white">
-        <div className="flex flex-col items-center gap-12 mb-32">
-          {(['NORMAL', 'EXTREME', 'ENDLESS', 'CREATIVE'] as GameMode[]).map(m => (
-            <ModeItem key={m} label={m} active={selectedMode === m} onClick={() => setSelectedMode(m)} />
-          ))}
-        </div>
-        <div className="flex flex-col items-center gap-4 cursor-pointer group" onClick={startGame}>
-          <div className="w-12 h-12 border-2 border-[#2ECC71] group-hover:bg-[#2ECC71] transition-all rounded-full flex items-center justify-center relative">
-             <div className="w-px h-8 bg-[#2ECC71] group-hover:bg-white absolute" />
-             <div className="w-8 h-px bg-[#2ECC71] group-hover:bg-white absolute" />
-          </div>
-          <span className="text-xl font-black uppercase tracking-[0.4em] group-hover:text-[#2ECC71]">Establish Link</span>
-        </div>
-      </div>
-    );
-  }
 
   return (
-    <>
-      <div className="relative w-screen h-screen overflow-hidden bg-[#F8F4EE]">
-        <ErrorBoundary>
-          {uiState && (
-            <>
-              <div className="absolute top-8 left-8 z-50 pointer-events-auto flex flex-col gap-1">
-                <div className="flex items-center gap-3">
-                  <h1 className="text-4xl font-black uppercase tracking-tighter text-black">{currentCity?.name}</h1>
-                  <div className="bg-black text-white px-2 py-0.5 text-[10px] font-black uppercase rounded-sm">Week {uiState.level}</div>
-                </div>
-                <p className="text-[10px] font-bold uppercase opacity-40 tracking-[0.3em] text-black">{DAYS[Math.floor(uiState.daysElapsed % 7)]}</p>
-                <div className="flex items-center gap-2 mt-4">
-                  <button onClick={() => {
-                    PersistenceManager.saveGame(engineRef.current!.state, camera);
-                    setView('MAIN_MENU');
-                  }} className="text-[9px] font-black uppercase tracking-widest opacity-30 hover:opacity-100 text-black text-left">← Main Hub</button>
-                  <span className="w-1 h-1 bg-black/10 rounded-full" />
-                  <span className="text-[8px] font-black uppercase opacity-20 tracking-widest text-black">Autosave Active</span>
-                </div>
-              </div>
-  
-              <Stats score={uiState.score} timeScale={uiState.timeScale} onSpeedChange={(s) => { if(engineRef.current) engineRef.current.state.timeScale = s; syncStateImmediate(); }} />
-  
-              <ResourcePanel 
-                resources={uiState.resources} 
-                activeLineIdx={activeLineIdx} 
-                onLineIdxChange={setActiveLineIdx} 
-                lines={uiState.lines} 
-                stations={uiState.stations}
-                onAddTrain={handleAddTrain} 
-                onRemoveTrain={handleRemoveTrain}
-                onDeleteLine={handleLineDelete} 
-                onAudit={() => setShowAudit(!showAudit)}
-                onAddWagon={(trainId) => { engineRef.current?.addWagonToTrain(activeLineIdx, trainId); syncStateImmediate(); }}
-                onRemoveWagon={(trainId) => { engineRef.current?.removeWagonFromTrain(activeLineIdx, trainId); syncStateImmediate(); }}
-                onDownload={handleDownloadAnalysis}
-              />
-              <KeyboardHints />
-            </>
-          )}
-  
-          <GameCanvas
-            canvasRef={canvasRef}
-            width={dimensions.width}
-            height={dimensions.height}
+    <div className="relative w-screen h-screen overflow-hidden bg-[#F8F4EE]">
+      <ErrorBoundary>
+        {view === 'MAIN_MENU' && (
+          <MainMenuView 
+            isLoading={isLoading} 
+            saveInfo={saveInfo} 
+            onNewConnection={() => setView('CITY_SELECT')} 
+            onResume={resumeGame} 
+          />
+        )}
+
+        {view === 'CITY_SELECT' && (
+          <CitySelectView 
+            onCitySelect={(city) => { setCurrentCity(city); setView('MODE_SELECT'); }} 
+            onBack={() => setView('MAIN_MENU')} 
+          />
+        )}
+
+        {view === 'MODE_SELECT' && (
+          <ModeSelectView 
+            selectedMode={selectedMode} 
+            onModeSelect={setSelectedMode} 
+            onStart={startGame} 
+          />
+        )}
+
+        {view === 'GAME' && uiState && (
+          <GameView 
+            uiState={uiState}
+            currentCity={currentCity}
             camera={camera}
             setCamera={setCamera}
             engineRef={engineRef}
-            currentCity={currentCity}
+            canvasRef={canvasRef}
             activeLineIdx={activeLineIdx}
             setActiveLineIdx={setActiveLineIdx}
             syncStateImmediate={syncStateImmediate}
+            onSpeedChange={(s) => { if(engineRef.current) engineRef.current.state.timeScale = s; syncStateImmediate(); }}
+            onAddTrain={() => { engineRef.current?.addTrainToLine(activeLineIdx); syncStateImmediate(); }}
+            onRemoveTrain={(id) => { engineRef.current?.removeTrainFromLine(activeLineIdx, id); syncStateImmediate(); }}
+            onDeleteLine={() => { engineRef.current?.removeLine(activeLineIdx); syncStateImmediate(); }}
+            onAddWagon={(id) => { engineRef.current?.addWagonToTrain(activeLineIdx, id); syncStateImmediate(); }}
+            onRemoveWagon={(id) => { engineRef.current?.removeWagonFromTrain(activeLineIdx, id); syncStateImmediate(); }}
+            onDownload={() => currentCity && DataLogger.downloadReport(engineRef.current!.state, currentCity)}
+            onBackToMenu={handleBackToMenu}
+            onRestart={startGame}
+            onChangeRegion={() => { PersistenceManager.clearSave(); setView('CITY_SELECT'); }}
             isDragging={isDragging}
             setIsDragging={setIsDragging}
             isPanning={isPanning}
@@ -474,110 +286,17 @@ const App: React.FC = () => {
             setDragCurrent={setDragCurrent}
             hoveredStationRef={hoveredStationRef}
             mousePosRef={mousePosRef}
+            showAudit={showAudit}
+            setShowAudit={setShowAudit}
+            showStrategist={showStrategist}
+            setShowStrategist={setShowStrategist}
           />
-  
-          <div className="fixed bottom-32 left-8 z-50 flex flex-col gap-2">
-            <button onClick={() => setShowStrategist(!showStrategist)} className="bg-black text-white w-12 h-12 flex items-center justify-center shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:translate-x-1 hover:translate-y-1 hover:shadow-none transition-all" title="AI Strategist"><span className="text-xl">🧠</span></button>
-          </div>
-  
-          {showStrategist && uiState && <Strategist gameState={uiState} onClose={() => setShowStrategist(false)} />}
-          
-          {showAudit && uiState && (
-            <div className="fixed bottom-32 left-8 z-[100] bg-white p-6 border-2 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] min-w-[300px]">
-               <h4 className="text-[10px] font-black uppercase mb-4 tracking-widest border-b border-black pb-2 text-black">System Audit & Integrity</h4>
-               <div className="mb-4 p-2 bg-black/5 text-[9px] font-mono leading-tight border border-black/10 text-black font-bold">
-                 STATUS: {SystemValidator.validateSystemState(uiState, currentCity!) ? 'OPTIMAL' : 'ADJUSTING'} <br/>
-                 VERIFICATION CYCLE: 5.0s
-               </div>
-               {Object.entries(uiState.totalResources).map(([k, v]) => (
-                 <div key={k} className="flex justify-between py-1.5 text-[10px] font-black uppercase border-b border-black last:border-0 text-black">
-                   <span className="opacity-70">{k}</span>
-                   <span className="tabular-nums font-black">{uiState.resources[k as keyof typeof uiState.resources]} / {v}</span>
-                 </div>
-               ))}
-            </div>
-          )}
-  
-          {uiState?.isPausedForReward && uiState?.pendingRewardOptions && (
-            <div className="fixed inset-0 z-[400] flex items-center justify-center bg-white/40 backdrop-blur-sm">
-              <div className="bg-white p-12 max-w-2xl w-full border-4 border-black shadow-[16px_16px_0px_0px_rgba(0,0,0,1)] animate-in zoom-in-95">
-                <h2 className="text-4xl font-black uppercase tracking-tighter mb-12 border-b-4 border-black pb-4 text-black">System Expansion</h2>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
-                  {uiState.pendingRewardOptions.map(choice => (
-                    <button key={choice.id} onClick={() => { engineRef.current?.selectReward(choice); syncStateImmediate(); }} className="group flex flex-col items-center p-8 bg-white border-4 border-black hover:bg-black hover:text-white transition-all shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] hover:shadow-none hover:translate-x-2 hover:translate-y-2">
-                      <span className="text-[10px] font-black uppercase mb-2 text-black group-hover:text-white">{choice.label}</span>
-                      <span className="text-xl font-black uppercase text-center leading-tight text-black group-hover:text-white">{choice.description}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-  
-          {uiState && !uiState.gameActive && (
-            <div className="fixed inset-0 z-[500] flex items-center justify-center bg-black/60 backdrop-blur-md">
-              <div className="bg-white p-12 max-w-xl w-full border-4 border-black shadow-[20px_20px_0px_0px_rgba(0,0,0,1)] animate-in zoom-in-105">
-                <h2 className="text-5xl font-black uppercase tracking-tighter mb-4 text-black border-b-8 border-black pb-4">System Halted</h2>
-                <p className="text-xl font-black uppercase mb-12 text-black/60 tracking-tight">One of your stations reached critical capacity.</p>
-                
-                <div className="grid grid-cols-2 gap-1 mb-12 bg-black border-2 border-black">
-                  <StatCard label="Final Throughput" val={uiState.score} />
-                  <StatCard label="Weeks Operational" val={uiState.level} />
-                  <StatCard label="Network Size" val={uiState.stations.length} />
-                  <StatCard label="Transit Lines" val={uiState.lines.length} />
-                </div>
-  
-                <div className="flex flex-col gap-4">
-                  <button 
-                    onClick={restartGame}
-                    className="w-full py-6 bg-[#2ECC71] text-white border-4 border-black text-2xl font-black uppercase tracking-tighter shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] hover:shadow-none hover:translate-x-1 hover:translate-y-1 transition-all"
-                  >
-                    Re-Initialize Network
-                  </button>
-                  <button 
-                    onClick={() => { PersistenceManager.clearSave(); setView('CITY_SELECT'); }}
-                    className="w-full py-4 bg-white text-black border-4 border-black text-lg font-black uppercase tracking-tighter hover:bg-black hover:text-white transition-colors"
-                  >
-                    Change Region
-                  </button>
-                  <button 
-                    onClick={handleDownloadAnalysis}
-                    className="w-full py-2 bg-black text-white text-[10px] font-black uppercase"
-                  >
-                    Download Analysis Data
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-        </ErrorBoundary>
-      </div>
+        )}
+      </ErrorBoundary>
       <MobileWarning />
       <Toast message={toast.msg} visible={toast.visible} onHide={() => setToast({ ...toast, visible: false })} />
-    </>
+    </div>
   );
 };
-
-const StatCard = ({ label, val }: { label: string, val: number | string }) => (
-  <div className="bg-white p-6 flex flex-col justify-center border border-black">
-    <span className="text-[9px] font-black uppercase tracking-widest text-black/40 mb-1">{label}</span>
-    <span className="text-4xl font-black text-black tabular-nums leading-none">{val}</span>
-  </div>
-);
-
-const MenuBtn = ({ children, icon, onClick, className = '' }: any) => (
-  <div onClick={onClick} className={`flex items-center gap-6 group cursor-pointer ${className}`}>
-    <span className="text-white/40 text-3xl font-black group-hover:text-blue-400">{icon}</span>
-    <div className="bg-blue-600 px-8 py-3 group-hover:bg-white group-hover:text-black transition-all">
-      <span className="text-4xl font-black text-white group-hover:text-black uppercase tracking-tighter">{children}</span>
-    </div>
-  </div>
-);
-
-const ModeItem = ({ label, active, onClick }: any) => (
-  <div onClick={onClick} className={`cursor-pointer transition-all ${active ? 'bg-blue-600 px-16 py-4' : 'opacity-40 hover:opacity-100'}`}>
-    <span className={`text-6xl font-black uppercase tracking-tighter ${active ? 'text-white' : 'text-white/40'}`}>{label}</span>
-  </div>
-);
 
 export default App;
