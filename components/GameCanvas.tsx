@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { GameEngine } from '../services/gameEngine';
 import { City, Station, Point } from '../types';
@@ -26,6 +27,8 @@ interface GameCanvasProps {
 
   hoveredStationRef: React.MutableRefObject<Station | null>;
   mousePosRef: React.MutableRefObject<Point>;
+
+  onStationClick?: (id: number) => void;
 }
 
 export const GameCanvas: React.FC<GameCanvasProps> = ({
@@ -48,7 +51,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   dragCurrent,
   setDragCurrent,
   hoveredStationRef,
-  mousePosRef
+  mousePosRef,
+  onStationClick
 }) => {
 
   const screenToWorld = (sx: number, sy: number) => ({
@@ -105,6 +109,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     const hit = engineRef.current?.state.stations.find(s => getDistance(s, world) < 80 / camera.scale);
     
     if (hit) {
+      if (onStationClick) onStationClick(hit.id);
       const lineAtStart = engineRef.current?.state.lines.find(l => l.stations[0] === hit.id || l.stations[l.stations.length - 1] === hit.id);
       if (lineAtStart) setActiveLineIdx(lineAtStart.id);
       setDragStart(hit); 

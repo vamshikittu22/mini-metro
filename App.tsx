@@ -12,24 +12,24 @@ import { MobileWarning } from './components/MobileWarning';
 import { Toast } from './components/UI/Toast';
 import { PersistenceManager } from './services/persistenceManager';
 
-// Import newly extracted views
+// Import views
 import { MainMenuView } from './components/views/MainMenuView';
 import { CitySelectView } from './components/views/CitySelectView';
 import { ModeSelectView } from './components/views/ModeSelectView';
 import { GameView } from './components/views/GameView';
 import { CaseStudyView } from './components/views/CaseStudyView';
+import { ArchitectView } from './components/views/ArchitectView';
 
 // Import the hotkeys hook
 import { useGameHotkeys } from './hooks/useGameHotkeys';
 
-type AppView = 'MAIN_MENU' | 'CITY_SELECT' | 'MODE_SELECT' | 'GAME' | 'CASE_STUDY';
+type AppView = 'MAIN_MENU' | 'CITY_SELECT' | 'MODE_SELECT' | 'GAME' | 'CASE_STUDY' | 'ARCHITECT';
 
 // Reducer for syncing game state to UI safely
 type Action = { type: 'SYNC'; payload: GameState };
 function stateReducer(state: GameState | null, action: Action): GameState | null {
   switch (action.type) {
     case 'SYNC':
-      // Return a shallow copy to trigger React update
       return { ...action.payload };
     default:
       return state;
@@ -199,7 +199,7 @@ const App: React.FC = () => {
   }, [view, camera]);
 
   useEffect(() => {
-    if (!canvasRef.current || view !== 'GAME') return;
+    if (!canvasRef.current || (view !== 'GAME' && view !== 'ARCHITECT')) return;
     rendererRef.current = new Renderer(canvasRef.current);
   }, [view]);
 
@@ -243,6 +243,7 @@ const App: React.FC = () => {
             onNewConnection={() => setView('CITY_SELECT')} 
             onResume={resumeGame} 
             onCaseStudy={() => setView('CASE_STUDY')}
+            onArchitect={() => setView('ARCHITECT')}
           />
         )}
 
@@ -263,6 +264,12 @@ const App: React.FC = () => {
 
         {view === 'CASE_STUDY' && (
           <CaseStudyView 
+            onBack={() => setView('MAIN_MENU')} 
+          />
+        )}
+
+        {view === 'ARCHITECT' && (
+          <ArchitectView 
             onBack={() => setView('MAIN_MENU')} 
           />
         )}

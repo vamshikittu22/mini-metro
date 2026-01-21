@@ -8,6 +8,7 @@ interface MainMenuViewProps {
   onNewConnection: () => void;
   onResume: () => void;
   onCaseStudy: () => void;
+  onArchitect: () => void;
 }
 
 export const MainMenuView: React.FC<MainMenuViewProps> = ({ 
@@ -15,7 +16,8 @@ export const MainMenuView: React.FC<MainMenuViewProps> = ({
   saveInfo, 
   onNewConnection, 
   onResume,
-  onCaseStudy
+  onCaseStudy,
+  onArchitect
 }) => {
   return (
     <div className="fixed inset-0 bg-[#1A1A1A] flex flex-col items-start justify-center p-24 select-none">
@@ -31,6 +33,7 @@ export const MainMenuView: React.FC<MainMenuViewProps> = ({
           Resume {saveInfo.time && <span className="text-[16px] lowercase opacity-50 ml-2">({saveInfo.time})</span>}
         </MenuBtn>
         <MenuBtn icon="◎" onClick={onCaseStudy}>Case Study</MenuBtn>
+        <MenuBtn icon="◆" onClick={onArchitect}>Architect Mode</MenuBtn>
         <MenuBtn icon="→" onClick={() => {}}>Daily Challenge</MenuBtn>
         <MenuBtn icon="↓" onClick={() => {}}>Options</MenuBtn>
         <MenuBtn icon="↙" onClick={() => {}}>Exit</MenuBtn>
